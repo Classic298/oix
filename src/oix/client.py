@@ -21,7 +21,9 @@ class APIError(Exception):
         self.method = method
         self.path = path
         self.detail = detail
-        super().__init__(f"Open WebUI returned HTTP {status} for {method} {path}".rstrip())
+        super().__init__(
+            f"Open WebUI returned HTTP {status} for {method} {path}".rstrip()
+        )
 
 
 def _origin(value: str) -> str:
@@ -200,8 +202,10 @@ class Client:
         reply_to_id: str | None = None,
     ):
         message = AppChannelMessage(
-            content=content, actions=actions if actions is not None else [],
-            parent_id=parent_id, reply_to_id=reply_to_id,
+            content=content,
+            actions=actions if actions is not None else [],
+            parent_id=parent_id,
+            reply_to_id=reply_to_id,
         )
         return await self._request(
             "POST",

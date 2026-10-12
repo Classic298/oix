@@ -1,18 +1,23 @@
 """Optional FastAPI adapter. Mount GET discovery and POST events at any path."""
 
-import json
+from contextlib import asynccontextmanager
 
-import aiohttp
 from fastapi import APIRouter, HTTPException, Request
 
-from .app import App
-from .client import APIError
+from .app import MAX_EVENT_BYTES, App, _EventError
 
 
 def create_router(
     app: App, *, path: str = "/events", manifest: bool = True
 ) -> APIRouter:
-    router = APIRouter()
+    @asynccontextmanager
+    async def lifespan(server):
+        try:
+            yield
+        finally:
+            await app.close()
+
+    router = APIRouter(lifespan=lifespan)
     if manifest:
 
         @router.get(path)
@@ -29,17 +34,11 @@ def create_router(
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
-            if len(body) > 262144:
+            if len(body) > MAX_EVENT_BYTES:
                 raise HTTPException(413, "Payload too large")
         try:
-            return await app.handle_event(json.loads(body), authorization=authorization)
-        except PermissionError:
-            raise HTTPException(403, "Invalid event context") from None
-        except (ValueError, KeyError, TypeError, AttributeError):
-            raise HTTPException(400, "Invalid app event or reply") from None
-        except APIError:
-            raise HTTPException(403, "WebUI rejected event verification") from None
-        except (aiohttp.ClientError, TimeoutError):
-            raise HTTPException(502, "WebUI is unavailable") from None
+            return await app._handle_body(body, authorization)
+        except _EventError as exc:
+            raise HTTPException(exc.status, exc.detail) from None
 
     return router
