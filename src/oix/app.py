@@ -3,7 +3,7 @@
 import hmac
 import json
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, get_args
 
 from aiohttp import ClientError, web
 from cryptography.hazmat.primitives import serialization
@@ -19,7 +19,7 @@ class App:
     def __init__(
         self,
         *,
-        id: str,
+        manifest_id: str,
         name: str,
         api_key: str,
         private_key: str,
@@ -40,7 +40,7 @@ class App:
         if not isinstance(key, Ed25519PrivateKey):
             raise ValueError("An Ed25519 private key is required")
         if (
-            not 1 <= len(id) <= 100
+            not 1 <= len(manifest_id) <= 100
             or not 1 <= len(name) <= 100
             or len(description) > 2000
         ):
@@ -57,7 +57,7 @@ class App:
         self._allowed_private_origins = allowed_private_origins
         self._handlers: dict[str, Handler] = {}
         self.manifest = {
-            "id": id,
+            "id": manifest_id,
             "name": name,
             "description": description,
             "public_key": key.public_key()
@@ -85,6 +85,9 @@ class App:
         )
 
     def on(self, event_type: EventType):
+        if event_type not in get_args(EventType):
+            raise ValueError(f"Unknown event type: {event_type}")
+
         def register(handler: Handler) -> Handler:
             if event_type in self._handlers:
                 raise ValueError(f"Handler already registered for {event_type}")
@@ -159,11 +162,11 @@ class App:
             return {"proof": client._sign(challenge)}
         event = Event.model_validate(payload)
         if event.type.startswith("channel.message."):
-            verified = await client.verify_event(payload["event_context"])
-            if verified != {k: v for k, v in payload.items() if k != "event_context"}:
+            verified = await client.verify_event(payload["event_token"])
+            if verified != {k: v for k, v in payload.items() if k != "event_token"}:
                 raise PermissionError("Event context mismatch")
         else:
-            verified = await client.authorize(payload["execution_context"])
+            verified = await client.authorize(payload["execution_token"])
             if (
                 verified.get("authorized") is not True
                 or verified["operation_id"] != event.id
@@ -191,7 +194,7 @@ class App:
             raise TypeError("Interaction handlers must return AppChannelReply or None")
         if reply.type == "deferred" and reply.operation_id != event.id:
             raise ValueError("Use the incoming event ID for deferred replies")
-        if event.type == "operation_status" and (
+        if event.type == "channel.operation.status" and (
             reply.visibility != "private" or reply.type == "update"
         ):
             raise ValueError("Operation status replies must be private")

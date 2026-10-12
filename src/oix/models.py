@@ -8,7 +8,7 @@ Scope = Literal["mentions:read", "messages:read", "messages:write", "channels:re
 EventType = Literal[
     "channel.mention",
     "channel.action",
-    "operation_status",
+    "channel.operation.status",
     "channel.message.created",
     "channel.message.updated",
     "channel.message.deleted",
@@ -49,7 +49,7 @@ class AppChannelReply(AppChannelMessage):
 
 
 class Event(BaseModel):
-    """Verified event fields. Execution contexts can be rechecked before later work."""
+    """Verified event fields. Execution tokens can be rechecked before later work."""
 
     id: str = Field(min_length=1, max_length=100)
     type: EventType
@@ -59,4 +59,4 @@ class Event(BaseModel):
     channel: dict[str, Any]
     data: dict[str, Any] = Field(default_factory=dict)
     message: dict[str, Any] | None = None
-    execution_context: str | None = None
+    execution_token: str | None = None

@@ -195,19 +195,19 @@ class Client:
             etag=etag,
         )
 
-    async def authorize(self, execution_context: str):
+    async def authorize(self, execution_token: str):
         """Recheck current user, app, scope and channel access before sensitive work."""
         return await self._request(
             "POST",
             "/authorize",
-            json_body={"context": execution_context},
+            json_body={"token": execution_token},
         )
 
-    async def verify_event(self, event_context: str):
+    async def verify_event(self, event_token: str):
         return await self._request(
             "POST",
             "/events/verify",
-            json_body={"context": event_context},
+            json_body={"token": event_token},
         )
 
 

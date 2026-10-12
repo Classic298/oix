@@ -19,7 +19,7 @@ from pathlib import Path
 from oix import App, AppChannelReply, Client, Event
 
 app = App(
-    id="hello",
+    manifest_id="hello",
     name="Hello",
     api_key=os.environ["API_KEY"],
     private_key=Path(os.environ["APP_PRIVATE_KEY_FILE"]).read_text(),
@@ -35,6 +35,8 @@ async def hello(event: Event, client: Client) -> AppChannelReply:
 if __name__ == "__main__":
     app.run()
 ```
+
+`manifest_id` identifies your app in its manifest. WebUI assigns a separate `app_id` to each installation; incoming events and their clients already carry that ID.
 
 Save the example as `app.py`. Generate an Ed25519 key and an API key, then start the app:
 
@@ -62,14 +64,14 @@ Register async handlers with `@app.on(...)` for:
 
 - `channel.mention`: explicit app mentions; text is in `event.data["text"]`.
 - `channel.action`: a saved message button; `event.data` contains `message_id`, `action_id`, and `context`.
-- `operation_status`: a status request for deferred work.
+- `channel.operation.status`: a status request for deferred work.
 - `channel.message.created`, `channel.message.updated`, `channel.message.deleted`: ordinary channel events, including messages without mentions. Request `messages:read` for these.
 
 All callbacks receive `(event, client)`. Events are verified against the originating WebUI before your handler runs. For interactions, the actor's admin status reflects their current authorization. Ordinary message events do not authorize commands on behalf of their authors.
 
 Return `AppChannelReply(content="...")` for an inline private reply, or set `visibility="channel"` to post publicly in the channel. `AppChannelReply` also supports `update`, `download`, `error`, and `deferred`. `Action(action_id="...", label="...", context={...})` buttons are supported only on saved channel messages. Button handlers must enforce any operation-specific rules themselves.
 
-Return `AppChannelReply(type="deferred", operation_id=event.id)` for background work and implement an `operation_status` handler. Keep status replies private. Your app manages workers, job storage, and restart recovery. Recheck `await client.authorize(event.execution_context)` before later sensitive work, and apply your app's own permissions.
+Return `AppChannelReply(type="deferred", operation_id=event.id)` for background work and implement an `channel.operation.status` handler. Keep status replies private. Your app manages workers, job storage, and restart recovery. Recheck `await client.authorize(event.execution_token)` before later sensitive work, and apply your app's own permissions.
 
 Ordinary channel-event handlers return `None`; use the runtime client to send a message. A mention can produce both a channel event and a mention interaction. Check `event.message["author"]` to avoid responding to your own messages. Delivery is best effort, can arrive out of order, and has no replay guarantee.
 
@@ -86,7 +88,7 @@ await client.update_message(
 )
 ```
 
-Available methods: `get_me()`, `list_channels()`, `list_messages(channel_id, limit=50, before=None, parent_id=None)`, `create_message(...)`, `update_message(...)`, `authorize(execution_context)`, and `verify_event(event_context)`. Responses are WebUI JSON dictionaries/lists. `APIError.status` exposes HTTP failures, including `412` for stale edits. Transport failures use aiohttp exceptions or `TimeoutError`. Message creation is never automatically retried.
+Available methods: `get_me()`, `list_channels()`, `list_messages(channel_id, limit=50, before=None, parent_id=None)`, `create_message(...)`, `update_message(...)`, `authorize(execution_token)`, and `verify_event(event_token)`. Responses are WebUI JSON dictionaries/lists. `APIError.status` exposes HTTP failures, including `412` for stale edits. Transport failures use aiohttp exceptions or `TimeoutError`. Message creation is never automatically retried.
 
 One `App` can serve multiple independent WebUI instances. Each event supplies its WebUI origin and local installation ID; its client is bound to that pair. For proactive messages, save the destination URL and app ID alongside your subscription, then call `app.client(webui_url, app_id)` after restart. API-key holders are trusted to connect instances; a shared key does not provide tenant-specific business authorization.
 

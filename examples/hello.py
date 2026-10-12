@@ -6,7 +6,7 @@ from pathlib import Path
 from oix import App, AppChannelReply, Client, Event
 
 app = App(
-    id="hello",
+    manifest_id="hello",
     name="Hello",
     api_key=os.environ["API_KEY"],
     private_key=Path(os.environ["APP_PRIVATE_KEY_FILE"]).read_text(),

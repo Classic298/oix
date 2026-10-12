@@ -1,4 +1,5 @@
 import copy
+from typing import get_args
 from unittest.mock import AsyncMock, Mock
 
 import aiohttp
@@ -14,6 +15,7 @@ from fastapi import FastAPI
 from oix import Action, APIError, App, AppChannelMessage, AppChannelReply, Client
 from oix.client import _check_address, _PublicResolver
 from oix.fastapi import create_router
+from oix.models import EventType
 
 KEY = Ed25519PrivateKey.generate()
 PEM = KEY.private_bytes(
@@ -28,7 +30,7 @@ AUTH = "Bearer " + API_KEY
 @pytest.fixture
 def app():
     return App(
-        id="test",
+        manifest_id="test",
         name="Test",
         api_key=API_KEY,
         private_key=PEM,
@@ -45,9 +47,39 @@ def mention():
         "actor": {"id": "alice", "is_admin": True},
         "channel": {"id": "channel-1"},
         "data": {"text": "hello"},
-        "execution_context": "context",
+        "execution_token": "context",
         "source": {"unsigned": "not exposed"},
     }
+
+
+@pytest.mark.parametrize(
+    "kind", ["mention", "operation_status", "channel.mentoin", "", "connect"]
+)
+def test_unknown_event_names_fail_at_registration(app, kind):
+    with pytest.raises(ValueError, match="Unknown event type"):
+        app.on(kind)
+
+
+@pytest.mark.parametrize("kind", get_args(EventType))
+def test_supported_events_register_once(app, kind):
+    handler = AsyncMock()
+    assert app.on(kind)(handler) is handler
+    with pytest.raises(ValueError, match="already registered"):
+        app.on(kind)(handler)
+
+
+async def test_runtime_verification_sends_token_field(app, monkeypatch):
+    request = AsyncMock(return_value={"authorized": True})
+    monkeypatch.setattr(Client, "_request", request)
+    client = app.client("https://webui.example", "installed")
+    await client.authorize("signed-execution-token")
+    request.assert_awaited_with(
+        "POST", "/authorize", json_body={"token": "signed-execution-token"}
+    )
+    await client.verify_event("signed-event-token")
+    request.assert_awaited_with(
+        "POST", "/events/verify", json_body={"token": "signed-event-token"}
+    )
 
 
 def authorized(event):
@@ -82,7 +114,9 @@ async def test_connect_multiple_instances_and_restart(app):
         assert (
             jwt.get_unverified_header(reply["proof"])["typ"] == "webui-app-connect+jwt"
         )
-    restarted = App(id="test", name="Test", api_key=API_KEY, private_key=PEM, scopes=[])
+    restarted = App(
+        manifest_id="test", name="Test", api_key=API_KEY, private_key=PEM, scopes=[]
+    )
     assert restarted.manifest["public_key"] == app.manifest["public_key"]
     assert (
         jwt.get_unverified_header(restarted.client(url, app_id)._sign())["typ"]
@@ -138,7 +172,7 @@ async def test_message_events_verified_and_not_command_authorized(
     async def handler(event, client):
         seen.append(event.message)
 
-    payload["event_context"] = "signed"
+    payload["event_token"] = "signed"
     assert await app.handle_event(payload, authorization=AUTH) == {"received": True}
     assert len(seen) == 1
     payload["message"]["content"] = "forged"
@@ -355,7 +389,7 @@ def test_private_buttons_rejected():
         AppChannelReply(actions=[Action(action_id="publish", label="Publish")])
 
 
-@pytest.mark.parametrize("kind", ["channel.action", "operation_status"])
+@pytest.mark.parametrize("kind", ["channel.action", "channel.operation.status"])
 async def test_action_and_deferred_status(app, monkeypatch, kind):
     payload = mention()
     payload["type"] = kind
