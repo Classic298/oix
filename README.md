@@ -113,6 +113,24 @@ WebUI's setting permits the local app endpoint. The SDK accepts HTTP and private
 
 ### Configuration
 
+Set `profile_image_url="https://example.com/doge.png"` in `App(...)` to supply a profile image. Use an HTTP(S) image URL that users' browsers can load without the app API key, or embed a PNG, JPEG, GIF or WebP as a base64 data URL (maximum 192 KiB including the prefix). WebUI uses it in messages, mentions, member lists and admin settings. For an existing installation, refresh its app details in WebUI and save to pick up image changes. Omitting it keeps the default icon.
+
+Pass a local file directly and oix will embed it:
+
+```python
+from pathlib import Path
+from oix import App
+
+app = App(
+    manifest_id="doge",
+    name="Doge",
+    scopes=["channels:messages:write"],
+    profile_image_url=Path("doge.png"),
+)
+```
+
+The file is read once when `App` is created. Relative paths use the process's working directory. PNG, JPEG, GIF and WebP are supported; the encoded data URL must fit within 192 KiB. Missing, unreadable or oversized files fail at startup.
+
 `manifest_id` identifies your app in its manifest. WebUI assigns a separate `app_id` to each installation; incoming events and their clients already carry that ID.
 
 The SDK reads `API_KEY` and the PEM file at `APP_PRIVATE_KEY_FILE`. Explicit `api_key` and PEM `private_key` arguments override these defaults. Missing or invalid credentials fail at construction; startup never generates credentials.

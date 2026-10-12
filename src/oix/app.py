@@ -1,11 +1,13 @@
 """Authenticate events and run verified app handlers."""
 
 import asyncio
+import base64
 import hmac
 import inspect
 import json
 import logging
 import os
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, get_args
@@ -19,6 +21,7 @@ from aiohttp import (
 )
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from pydantic import HttpUrl
 
 from .client import APIError, Client, _origin
 from .models import AppChannelReply, Event, EventType, Scope
@@ -54,6 +57,7 @@ class App:
         api_key: str | None = None,
         private_key: str | None = None,
         description: str = "",
+        profile_image_url: str | Path | None = None,
         allowed_origins: tuple[str, ...] | None = None,
         ignore_self_events: bool = True,
         max_concurrency: int = 32,
@@ -132,6 +136,56 @@ class App:
                 "contain HTTP(S) origins without paths, credentials, "
                 "queries or fragments."
             ) from None
+        if isinstance(profile_image_url, Path):
+            mime = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".webp": "image/webp",
+            }.get(profile_image_url.suffix.lower())
+            if mime is None:
+                raise ValueError(
+                    "profile_image_url file must be PNG, JPEG, GIF or WebP"
+                )
+            prefix = f"data:{mime};base64,"
+            max_bytes = (196608 - len(prefix)) // 4 * 3
+            try:
+                with profile_image_url.open("rb") as image_file:
+                    image_data = image_file.read(max_bytes + 1)
+            except OSError as exc:
+                raise ValueError(
+                    f"Cannot read profile_image_url file: {exc.strerror or str(exc)}"
+                ) from None
+            profile_image_url = prefix + base64.b64encode(image_data).decode("ascii")
+        if profile_image_url is not None:
+            try:
+                if not isinstance(profile_image_url, str):
+                    raise ValueError
+                if profile_image_url.startswith("data:"):
+                    if len(profile_image_url) > 196608:
+                        raise ValueError
+                    header, encoded = profile_image_url.split(",", 1)
+                    if not re.fullmatch(
+                        r"data:image/(png|jpeg|gif|webp);base64", header
+                    ):
+                        raise ValueError
+                    if not base64.b64decode(encoded, validate=True):
+                        raise ValueError
+                else:
+                    image_url = HttpUrl(profile_image_url)
+                    if (
+                        len(profile_image_url) > 2048
+                        or image_url.username is not None
+                        or image_url.password is not None
+                    ):
+                        raise ValueError
+            except (ValueError, TypeError):
+                raise ValueError(
+                    "profile_image_url must be an HTTP(S) URL without credentials "
+                    "(maximum 2048 characters), or a base64 PNG, JPEG, GIF or WebP "
+                    "data URL (maximum 192 KiB)"
+                ) from None
         self._api_key = api_key
         self._private_key = key
         self._allowed_origins = allowed_origins
@@ -156,6 +210,9 @@ class App:
             .decode(),
             "requested_scopes": list(scopes),
         }
+
+        if profile_image_url is not None:
+            self.manifest["profile_image_url"] = profile_image_url
 
     def authenticate(self, authorization: str) -> None:
         if not hmac.compare_digest(
