@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.1] - 2026-10-12
+
+- Warn instead of rejecting API keys shorter than 32 characters.
+- Allow commas in API keys; continue rejecting empty keys and invalid HTTP header characters.
+
 ## [0.4.0] - 2026-10-12
 
 - Read persistent credentials from environment defaults.

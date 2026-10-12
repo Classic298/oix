@@ -56,14 +56,15 @@ class App:
             api_key = os.environ.get("API_KEY", "")
         if not api_key:
             raise ValueError("Set API_KEY or pass api_key when creating App")
-        if (
-            not 32 <= len(api_key) <= 4096
-            or not api_key.isascii()
-            or any(c.isspace() for c in api_key)
-            or "," in api_key
-        ):
+        if len(api_key) > 4096 or any(not 33 <= ord(c) <= 126 for c in api_key):
             raise ValueError(
-                "API_KEY must be a single ASCII secret of 32-4096 characters"
+                "API_KEY must contain only printable ASCII characters without spaces "
+                "(maximum 4096 characters)"
+            )
+        if len(api_key) < 32:
+            log.warning(
+                "API_KEY is shorter than 32 characters. "
+                "A long, randomly generated key is recommended."
             )
         if private_key is None:
             filename = os.environ.get("APP_PRIVATE_KEY_FILE")
