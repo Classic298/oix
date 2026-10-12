@@ -60,7 +60,7 @@ class App:
     ):
         if api_key is None:
             api_key = os.environ.get("API_KEY", "")
-        if not api_key:
+        if not isinstance(api_key, str) or not api_key:
             raise ValueError("Set API_KEY or pass api_key when creating App")
         if len(api_key) > 4096 or any(not 33 <= ord(c) <= 126 for c in api_key):
             raise ValueError(
@@ -77,7 +77,7 @@ class App:
             if not filename:
                 raise ValueError("Set APP_PRIVATE_KEY_FILE or pass private_key to App")
             try:
-                private_key = Path(filename).read_text()
+                private_key = Path(filename).read_text(encoding="utf-8")
             except FileNotFoundError:
                 raise ValueError(
                     "Cannot read APP_PRIVATE_KEY_FILE: file does not exist. "
@@ -92,6 +92,10 @@ class App:
                 raise ValueError(
                     "Cannot read APP_PRIVATE_KEY_FILE: expected a UTF-8 PEM file."
                 ) from None
+        if not isinstance(private_key, str):
+            raise ValueError(
+                "private_key must contain an unencrypted Ed25519 PEM string"
+            )
         try:
             key = serialization.load_pem_private_key(
                 private_key.encode(), password=None

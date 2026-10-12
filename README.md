@@ -34,15 +34,33 @@ if __name__ == "__main__":
 
 `manifest_id` identifies your app in its manifest. WebUI assigns a separate `app_id` to each installation; incoming events and their clients already carry that ID.
 
-Save the example as `app.py`. Generate an Ed25519 key and an API key, then start the app:
+Save the example as `app.py`. Create credentials **once**, from your app directory. This shell snippet refuses to overwrite an existing key or `.env`:
 
 ```sh
-umask 077
-openssl genpkey -algorithm ED25519 -out app-private-key.pem
-export APP_PRIVATE_KEY_FILE="$PWD/app-private-key.pem"
-export API_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+(
+    set -eu
+    umask 077
+    if [ -e app-private-key.pem ] || [ -e .env ]; then
+        echo "Credentials already exist. Reuse them; do not regenerate them." >&2
+        exit 1
+    fi
+    set -C
+    openssl genpkey -algorithm ED25519 > app-private-key.pem
+    printf 'export API_KEY=%s\nexport APP_PRIVATE_KEY_FILE=./app-private-key.pem\n' \
+        "$(openssl rand -hex 32)" > .env
+)
+```
+
+Keep `.env` and the private-key file out of source control. Back them up securely. In production, persist these values through your deployment's secret settings and a mounted key file. Replacing either credential requires updating existing installations.
+
+For normal local startup, load the same credentials and run:
+
+```sh
+. ./.env
 python app.py
 ```
+
+The SDK reads process environment variables; it does not automatically load `.env`. Run from the app directory when using the relative file path above.
 
 The app listens on port `8000` at `/events`. Use `app.run(port=8001, path="/manifest")` to change these. Press Ctrl+C to stop it.
 
@@ -52,7 +70,9 @@ In WebUI, enable Apps, add your public HTTPS event URL and the API key, approve 
 
 Pass `manifest=False` to `app.run()` for a POST-only endpoint and enter the app details manually in WebUI. `app.manifest` supplies those details.
 
-For localhost development, pass the exact WebUI origin in `allowed_private_origins=("http://127.0.0.1:8080",)`. Configure WebUI's `APP_ALLOWED_PRIVATE_ORIGINS` to allow your app origin. Production callbacks require HTTPS and public destinations by default.
+For local development, set `OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS=http://127.0.0.1:8080` on the app, using the WebUI origin reachable from the app process. Multiple origins are comma-separated. Explicit `allowed_private_origins=(...)` overrides the environment; an empty tuple disables all exceptions. Invalid configured origins fail at construction.
+
+Set WebUI's `APP_ALLOWED_PRIVATE_ORIGINS` to allow your app origin. When connecting through a local HTTP WebUI URL, WebUI also requires its own origin in that setting. Inside containers, localhost means that container. Public HTTPS destinations need no private-origin exception.
 
 ## Events and replies
 
@@ -136,27 +156,20 @@ Run your existing server instead of calling `app.run()`. The router also accepts
 
 For another web framework, call `app.authenticate(authorization)` before reading a body, enforce a 1 MiB body limit while streaming, parse JSON, then `await app.handle_event(payload, authorization=authorization)`. Return the resulting JSON with compact UTF-8 serialization. Responses are limited to 256 KiB of actual JSON bytes and message content to 32,000 characters. Call `await app.close()` during shutdown: it stops admission, waits up to 30 seconds for accepted handlers, then cancels and awaits remaining work. The built-in server and FastAPI adapter do this automatically.
 
-## Migrating from 0.3
+## Troubleshooting
 
-Before:
-
-```python
-@app.on("channel.message.created")
-async def hello(event, client):
-    await client.create_message(
-        event.channel["id"], AppChannelMessage(content="Hello!")
-    )
-```
-
-After:
+`app.run()` installs concise stderr logging for `oix` if your application has not already configured logging. FastAPI uses the host application's logging. To see intentionally ignored events or events without handlers, configure Python logging before startup:
 
 ```python
-@app.on("channel.message.created")
-async def hello(event):
-    await event.send("Hello!")
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logging.getLogger("oix").setLevel(logging.DEBUG)
 ```
 
-For explicit destinations use `event.client.create_message(channel_id, content="...")`. Change updates to `event.client.update_message(message_id, content="...", etag=etag)`. Handlers no longer receive a second argument. Ordinary handlers run after acknowledgement and must return `None`; interactions can return strings for private replies.
+Connection verifies the app's signing identity, not callback reachability. If connection succeeds but handlers never run, check the app's verification logs: the app must reach the WebUI origin over HTTP(S), and WebUI must still permit the installation, scope and channel access. The logs distinguish blocked destinations, DNS, TLS, connection failures and timeouts. Ordinary self-authored events and events without registered handlers are acknowledged without running a handler.
+
+`APIError` includes the HTTP method, path, status and recognized WebUI error reason. Unknown response bodies remain available in its bounded `detail` attribute but are not included in default messages. Do not log response bodies or tokens indiscriminately. Handler programming errors retain their tracebacks.
 
 ## Development
 

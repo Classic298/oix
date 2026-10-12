@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2] - 2026-10-12
+
+- Validate private-origin configuration at startup, with an environment default.
+- Add standalone logging and actionable configuration, network and verification errors.
+- Show recognized WebUI API errors without exposing arbitrary response bodies.
+- Separate one-time credential creation from repeatable startup instructions.
+
 ## [0.4.1] - 2026-10-12
 
 - Warn instead of rejecting API keys shorter than 32 characters.
