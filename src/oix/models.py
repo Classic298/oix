@@ -16,7 +16,6 @@ Scope = Literal[
 EventType = Literal[
     "channel.mention",
     "channel.action",
-    "channel.operation.status",
     "channel.message.created",
     "channel.message.updated",
     "channel.message.deleted",
@@ -39,11 +38,10 @@ class AppChannelMessage(BaseModel):
 
 
 class AppChannelReply(AppChannelMessage):
-    type: Literal["message", "update", "deferred", "download", "error"] = "message"
+    type: Literal["message", "update", "ack", "download", "error"] = "message"
     visibility: Literal["private", "channel"] = "private"
     title: str = Field(default="", max_length=200)
     filename: str = Field(default="report.md", pattern=r"^[a-zA-Z0-9_.-]{1,100}\.md$")
-    operation_id: str | None = None
 
     @model_validator(mode="after")
     def check_reply(self):
@@ -51,8 +49,14 @@ class AppChannelReply(AppChannelMessage):
             self.visibility != "channel" or self.type not in ("message", "update")
         ):
             raise ValueError("Buttons require a channel message")
-        if self.type == "deferred" and not self.operation_id:
-            raise ValueError("Deferred replies require an operation ID")
+        if self.type == "ack" and (
+            self.content
+            or self.actions
+            or self.title
+            or self.parent_id
+            or self.reply_to_id
+        ):
+            raise ValueError("Acknowledgements cannot contain a message")
         return self
 
 

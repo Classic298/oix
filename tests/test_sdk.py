@@ -180,15 +180,16 @@ def test_private_buttons_rejected():
         AppChannelReply(actions=[Action(action_id="publish", label="Publish")])
 
 
-@pytest.mark.parametrize("kind", ["channel.action", "channel.operation.status"])
-async def test_action_and_deferred_status(app, monkeypatch, kind):
+@pytest.mark.parametrize("kind", ["channel.action", "channel.mention"])
+async def test_acknowledgement(app, monkeypatch, kind):
     payload = mention()
     payload["type"] = kind
-    payload["data"] = (
-        {"message_id": "saved-1", "action_id": "confirm", "context": {"value": 1}}
-        if kind == "channel.action"
-        else {"operation_id": payload["id"]}
-    )
+    if kind == "channel.action":
+        payload["data"] = {
+            "message_id": "saved-1",
+            "action_id": "confirm",
+            "context": {"value": 1},
+        }
     monkeypatch.setattr(
         Client, "authorize", AsyncMock(return_value=authorized(payload))
     )
@@ -196,11 +197,20 @@ async def test_action_and_deferred_status(app, monkeypatch, kind):
     @app.on(kind)
     async def handle(event):
         assert event.data == payload["data"]
-        return AppChannelReply(type="deferred", operation_id=event.id)
+        return AppChannelReply(type="ack")
 
-    reply = await app.handle_event(payload, client=bound(payload))
-    assert reply["operation_id"] == payload["id"]
-    assert reply["visibility"] == "private"
+    assert await app.handle_event(payload, client=bound(payload)) == {"type": "ack"}
+
+
+def test_removed_reply_and_event_contract(app):
+    with pytest.raises(ValueError):
+        AppChannelReply(type="deferred")
+    with pytest.raises(ValueError):
+        AppChannelReply(operation_id="old")
+    with pytest.raises(ValueError):
+        app.on("channel.operation.status")
+    with pytest.raises(ValueError, match="Acknowledgements"):
+        AppChannelReply(type="ack", content="Not a message")
 
 
 async def test_revoked_access_never_calls_handler(app, monkeypatch):

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0] - 2026-10-13
+
+- Add `AppChannelReply(type="ack")` to acknowledge an interaction without creating a response message.
+- Remove deferred replies, the operation-status event, and the reply `operation_id` field. Apps publish background results through the existing message API.
+- Keep execution-token authorization and the current Socket.IO transport. Upgrade WebUI and apps together after draining existing deferred jobs.
+
 ## [0.5.1] - 2026-10-13
 
 - Allow socket packets up to 16 MiB for runtime requests and responses, including message history. Keep the 1 MiB event and 256 KiB interaction response limits.

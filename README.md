@@ -160,14 +160,13 @@ Register async handlers with `@app.on(...)` for:
 
 - `channel.mention`: explicit app mentions; text is in `event.data["text"]`.
 - `channel.action`: a saved message button; `event.data` contains `message_id`, `action_id`, and `context`.
-- `channel.operation.status`: a status request for deferred work.
 - `channel.message.created`, `channel.message.updated`, `channel.message.deleted`: ordinary channel events, including messages without mentions. Request `channels:messages:read` for these.
 
 All callbacks receive one `event`. Its `event.client` is bound to the originating instance and installation, and is excluded from event serialization. Events are verified against the originating WebUI before your handler runs. For interactions, the actor's admin status reflects their current authorization. Ordinary message events do not authorize commands on behalf of their authors.
 
-For mentions, actions and operation-status handlers, return a string or `AppChannelReply(content="...")` for an inline private reply, or set `visibility="channel"` to post publicly in the channel. `AppChannelReply` also supports `update`, `download`, `error`, and `deferred`. `Action(action_id="...", label="...", context={...})` buttons are supported only on saved channel messages. Button handlers must enforce any operation-specific rules themselves.
+For mentions and actions, return a string or `AppChannelReply(content="...")` for an inline private reply, or set `visibility="channel"` to post publicly in the channel. `AppChannelReply` also supports `update`, `download`, `error`, and `ack`. `Action(action_id="...", label="...", context={...})` buttons are supported only on saved channel messages. Button handlers must enforce any operation-specific rules themselves.
 
-Return `AppChannelReply(type="deferred", operation_id=event.id)` for background work and implement a `channel.operation.status` handler. Keep status replies private. Your app manages workers, job storage, and restart recovery. Recheck `await event.client.authorize(event.execution_token)` before later sensitive work, and apply your app's own permissions.
+Return `AppChannelReply(type="ack")` after accepting background work. This creates no message, loading placeholder, or polling request. Persist durable work before acknowledging it; your worker posts results through `client.create_message()`. Your app owns workers and restart recovery. Recheck `await client.authorize(event.execution_token)` before later sensitive work, and apply your app's own permissions. An acknowledgement does not schedule work automatically.
 
 Ordinary channel-event handlers return `None`. Use `await event.send("...")` to post in the current channel or `await event.reply("...")` to reference the source message. Both preserve its existing thread; replying to a top-level message stays top-level. Both require write access and accept `actions=[...]`. Deleted messages and events without a source message cannot be replied to.
 
@@ -177,7 +176,7 @@ Ordinary events are acknowledged after verification, then handlers run in backgr
 
 Self-authored message events are ignored by default for the current installation. Pass `ignore_self_events=False` to receive them. Other apps and model messages are not filtered. A mention can produce both a channel event and a mention interaction.
 
-Interactions have a 2.5-second processing budget, including at most two seconds for verification. Ordinary verification has eight seconds; acknowledged handlers have no acknowledgement deadline. Timeout cancellation does not undo external side effects. Return a deferred reply for longer interactions.
+Interactions have a 2.5-second processing budget, including at most two seconds for verification. Ordinary verification has eight seconds; acknowledged handlers have no acknowledgement deadline. Timeout cancellation does not undo external side effects. Persist longer work and return an acknowledgement before this deadline.
 
 Route buttons by exact action ID:
 

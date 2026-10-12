@@ -475,13 +475,7 @@ class App:
                 raise TypeError(
                     "Interaction handlers must return AppChannelReply, str or None"
                 )
-            if reply.type == "deferred" and reply.operation_id != event.id:
-                raise ValueError("Use the incoming event ID for deferred replies")
-            if event.type == "channel.operation.status" and (
-                reply.visibility != "private" or reply.type == "update"
-            ):
-                raise ValueError("Operation status replies must be private")
-            result = reply.model_dump()
+            result = {"type": "ack"} if reply.type == "ack" else reply.model_dump()
             if len(_json_dumps(result).encode()) > 262144:
                 raise ValueError("App reply exceeds 256 KiB")
             return result

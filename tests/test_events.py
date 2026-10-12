@@ -170,7 +170,8 @@ async def test_bound_helpers_and_serialization(monkeypatch, parent):
     assert event.content is None
     with pytest.raises(ValueError, match="source message"):
         await event.reply("no")
-    event.type = "channel.operation.status"
+    event.type = "channel.action"
+    event.data = {}
     assert event.message_id is None and event.parent_id is None
     with pytest.raises(ValueError, match="source message"):
         await event.reply("no")
