@@ -21,13 +21,50 @@ class APIError(Exception):
         self.method = method
         self.path = path
         self.detail = detail
-        super().__init__(
-            f"Open WebUI returned HTTP {status} for {method} {path}".rstrip()
-        )
+        message = f"Open WebUI returned HTTP {status}"
+        if method or path:
+            message += f" for {method} {path}"
+        try:
+            reason = json.loads(detail).get("detail")
+        except (ValueError, AttributeError):
+            reason = None
+        # Only server-defined messages belong in default logs, never arbitrary bodies.
+        if isinstance(reason, str) and reason in {
+            "App scope was not granted",
+            "Invite the app into this channel first",
+            "Invalid app credential",
+            "Invalid or expired app context",
+            "Apps are disabled",
+            "App not found",
+            "App is inactive",
+            "Channels are disabled",
+            "Channel unavailable",
+            "Channel access denied",
+            "App invocation denied",
+            "Actor is unavailable",
+            "User is inactive",
+            "App message not found",
+            "Message changed",
+            "If-Match is required",
+            "Invalid message reference",
+            "App credentials changed",
+        }:
+            message += f": {reason}"
+        super().__init__(message)
+
+
+class _DestinationError(ValueError):
+    """A destination rejected by the SDK's network policy."""
 
 
 def _origin(value: str) -> str:
-    url = urlsplit(value)
+    try:
+        url = urlsplit(value)
+        port = url.port or (443 if url.scheme == "https" else 80)
+    except ValueError:
+        raise ValueError(
+            "Expected an HTTP(S) origin with a valid hostname and port"
+        ) from None
     if (
         len(value) > 2048
         or any(c.isspace() for c in value)
@@ -41,7 +78,6 @@ def _origin(value: str) -> str:
         or url.scheme not in ("http", "https")
     ):
         raise ValueError("Expected an HTTP(S) origin without a path or credentials")
-    port = url.port or (443 if url.scheme == "https" else 80)
     host = f"[{url.hostname}]" if ":" in url.hostname else url.hostname.lower()
     suffix = f":{port}" if port != (443 if url.scheme == "https" else 80) else ""
     return f"{url.scheme}://{host}{suffix}"
@@ -63,7 +99,11 @@ def _check_address(host: str) -> None:
             )
         )
     ):
-        raise ValueError("Private or reserved WebUI address is not allowed")
+        raise _DestinationError(
+            "WebUI resolves to a private or reserved address. For local development, "
+            "allow its exact origin with allowed_private_origins or "
+            "OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS."
+        )
 
 
 class _PublicResolver(aiohttp.resolver.ThreadedResolver):
@@ -95,7 +135,11 @@ class Client:
         }
         if not self._allow_private:
             if not self.webui_url.startswith("https://"):
-                raise ValueError("WebUI requires HTTPS")
+                raise _DestinationError(
+                    "WebUI requires HTTPS. For local HTTP development, allow its exact "
+                    "origin with allowed_private_origins or "
+                    "OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS."
+                )
             host = urlsplit(self.webui_url).hostname
             try:
                 ipaddress.ip_address(host)
