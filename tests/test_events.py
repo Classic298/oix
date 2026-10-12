@@ -469,9 +469,7 @@ async def test_api_error_detail_is_bounded():
     async with TestServer(server) as upstream:
         app = make_app()
         origin = str(upstream.make_url("")).rstrip("/")
-        client = Client(
-            origin, "installed", app._private_key, allowed_private_origins=(origin,)
-        )
+        client = Client(origin, "installed", app._private_key)
         with pytest.raises(APIError) as exc:
             await client.get_me()
         error = exc.value

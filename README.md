@@ -70,22 +70,22 @@ The app listens on port `8000` at `/events`. Keep it running while you connect i
 
 ## Connect to Open WebUI
 
-Your app and WebUI must be able to reach each other. For a deployed app, forward an HTTPS URL such as `https://hello.example.com/events` to the app's port `8000`. Open WebUI through its externally reachable HTTPS address when connecting. For two processes on your computer, use the [local development setup](#local-development) below first.
+Your app and WebUI must be able to reach each other. For a deployed app, forward an HTTPS URL such as `https://hello.example.com/events` to the app's port `8000`. In **Settings → Admin → General → WebUI URL**, set the HTTP(S) address your app can reach. If this is empty, WebUI uses the connection request’s address. For two processes on your computer, use the [local development setup](#local-development) below first.
 
 ### 1. Connect the app
 
 1. Sign in to WebUI as an admin. Open **Settings**, then **General** under **Admin**. Under **Features**, enable **Apps** and **Channels**, then save.
 2. Open **Apps** in the admin settings and click **Add app** (the plus button).
 3. In **App URL**, enter your app's full endpoint, for example `https://hello.example.com/events`. In **API Key**, paste the value of `API_KEY` from your app's `.env`, without `export API_KEY=`. Keep the private-key file on the app server.
-4. Click **Continue**. WebUI authenticates with that key and loads the app's name, public key and requested scopes automatically. Keep `channels:messages:read` and `channels:messages:write` selected for this example, then click **Back** to return to the connection form.
-5. Check **Who can use this app?**, then click **Connect**.
+4. Click **Continue**. WebUI authenticates with that key and loads the app's name, public key and requested scopes automatically. Keep `channels:messages:read` and `channels:messages:write` selected for this example, then click **Continue** to open the connection form.
+5. Check **Access**, then click **Connect**.
 
 The App URL points to your Python app. The SDK serves its manifest with GET and receives events with POST at that same URL; both require `Authorization: Bearer <API_KEY>`. You do not need a separate `/manifest` route. Opening the URL in a browser without the key returns 401.
 
 ### 2. Invite it and send a message
 
 1. Open a channel you own or manage, or create one. Apps cannot join direct messages.
-2. Click the **Users** count in the channel header. Under **Apps**, select **Hello** from **Choose an app** and click **Invite**.
+2. Click the **Users** count in the channel header. Click **Add Member**, select **Hello** under **Apps**, then click **Add**.
 3. Send `hello` in the channel. The app should reply `Hello!` as a channel message. No @mention is needed for this handler.
 
 Invite the app separately into each channel where it should receive messages. To connect another WebUI instance, repeat these steps with the same app URL and API key. Each event's client automatically uses the instance that sent it.
@@ -97,20 +97,19 @@ This example assumes WebUI runs at `http://127.0.0.1:8080` and the app at `http:
 Set this environment variable **on the WebUI process**, then restart WebUI:
 
 ```sh
-APP_ALLOWED_PRIVATE_ORIGINS=http://127.0.0.1:8000,http://127.0.0.1:8080
+APP_ALLOWED_PRIVATE_ORIGINS=http://127.0.0.1:8000
 ```
 
 Start your app with:
 
 ```sh
 . ./.env
-export OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS=http://127.0.0.1:8080
 python app.py
 ```
 
 Open WebUI at `http://127.0.0.1:8080` and follow the connection steps above, using **App URL** `http://127.0.0.1:8000/events`.
 
-WebUI's setting permits the local app endpoint and its own HTTP origin during connection. The app's setting permits callbacks to local WebUI. Public HTTPS destinations need neither exception. With Docker or separate machines, replace these addresses with ones reachable from both processes; `127.0.0.1` inside a container points to that container.
+WebUI's setting permits the local app endpoint. The SDK accepts HTTP and private WebUI callback addresses without extra configuration. With Docker or separate machines, replace these addresses with ones reachable from both processes; `127.0.0.1` inside a container points to that container.
 
 ### Configuration
 
@@ -120,7 +119,11 @@ The SDK reads `API_KEY` and the PEM file at `APP_PRIVATE_KEY_FILE`. Explicit `ap
 
 Use `app.run(port=8001, path="/events")` to change the listening port or endpoint. Pass `manifest=False` for a POST-only endpoint, then choose **Enter details manually** in WebUI. `app.manifest` supplies the app details, including its public key and requested scopes.
 
-`OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS` accepts comma-separated origins. Explicit `allowed_private_origins=(...)` overrides the environment; an empty tuple disables all exceptions. Invalid configured origins fail at construction.
+By default, any instance with the API key can connect, including HTTP and private addresses. API-key holders are trusted to choose callback destinations reachable from the app server. Use HTTPS across untrusted networks.
+
+To restrict accepted instances, optionally set `OPEN_WEBUI_ALLOWED_ORIGINS=https://one.example.com,https://two.example.com`. Only those exact origins (scheme, hostname and port) are then accepted, for connections and subsequent callbacks. This is an origin restriction, not an IP firewall. Explicit `allowed_origins=(...)` overrides the environment; unset or empty allows all origins. Invalid configured origins fail at startup.
+
+This replaces `allowed_private_origins` / `OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS` in 0.4.4. Remove the old setting; use the new allowlist only when you want to restrict access.
 
 ## Events and replies
 
@@ -215,7 +218,7 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("oix").setLevel(logging.DEBUG)
 ```
 
-Connection verifies the app's signing identity, not callback reachability. If connection succeeds but handlers never run, check the app's verification logs: the app must reach the WebUI origin over HTTP(S), and WebUI must still permit the installation, scope and channel access. The logs distinguish blocked destinations, DNS, TLS, connection failures and timeouts. Ordinary self-authored events and events without registered handlers are acknowledged without running a handler.
+Connection verifies the app's signing identity, not callback reachability. If connection succeeds but handlers never run, check the app's verification logs: the app must reach the WebUI origin over HTTP(S), and WebUI must still permit the installation, scope and channel access. The logs distinguish DNS, TLS, connection failures and timeouts. Ordinary self-authored events and events without registered handlers are acknowledged without running a handler.
 
 `APIError` includes the HTTP method, path, status and recognized WebUI error reason. Unknown response bodies remain available in its bounded `detail` attribute but are not included in default messages. Do not log response bodies or tokens indiscriminately. Handler programming errors retain their tracebacks.
 

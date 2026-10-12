@@ -20,7 +20,7 @@ from aiohttp import (
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from .client import APIError, Client, _DestinationError, _origin
+from .client import APIError, Client, _origin
 from .models import AppChannelReply, Event, EventType, Scope
 
 Handler = Callable[[Event], Awaitable[AppChannelReply | str | None]]
@@ -54,7 +54,7 @@ class App:
         api_key: str | None = None,
         private_key: str | None = None,
         description: str = "",
-        allowed_private_origins: tuple[str, ...] | None = None,
+        allowed_origins: tuple[str, ...] | None = None,
         ignore_self_events: bool = True,
         max_concurrency: int = 32,
     ):
@@ -116,29 +116,25 @@ class App:
             raise ValueError("Invalid app scopes")
         if type(max_concurrency) is not int or max_concurrency < 1:
             raise ValueError("max_concurrency must be a positive integer")
-        if allowed_private_origins is None:
-            allowed_private_origins = tuple(
+        if allowed_origins is None:
+            allowed_origins = tuple(
                 value.strip()
-                for value in os.environ.get(
-                    "OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS", ""
-                ).split(",")
+                for value in os.environ.get("OPEN_WEBUI_ALLOWED_ORIGINS", "").split(",")
                 if value.strip()
             )
         try:
-            if isinstance(allowed_private_origins, str):
+            if isinstance(allowed_origins, str):
                 raise ValueError
-            allowed_private_origins = tuple(
-                _origin(value) for value in allowed_private_origins
-            )
+            allowed_origins = tuple(_origin(value) for value in allowed_origins)
         except (ValueError, TypeError, AttributeError):
             raise ValueError(
-                "allowed_private_origins / OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS must "
+                "allowed_origins / OPEN_WEBUI_ALLOWED_ORIGINS must "
                 "contain HTTP(S) origins without paths, credentials, "
                 "queries or fragments."
             ) from None
         self._api_key = api_key
         self._private_key = key
-        self._allowed_private_origins = allowed_private_origins
+        self._allowed_origins = allowed_origins
         self._ignore_self_events = ignore_self_events
         self._max_concurrency = max_concurrency
         self._active_messages = 0
@@ -172,7 +168,7 @@ class App:
             webui_url,
             app_id,
             self._private_key,
-            allowed_private_origins=self._allowed_private_origins,
+            allowed_origins=self._allowed_origins,
         )
 
     def _register(self, handlers: dict[str, Handler], key: str):
@@ -295,6 +291,8 @@ class App:
                 raise ValueError("Invalid installation ID")
             try:
                 client = self.client(payload["webui_url"], payload["app_id"])
+            except PermissionError as exc:
+                raise _EventError(403, str(exc)) from None
             except ValueError as exc:
                 # Client validation messages exclude credentials and event bodies.
                 log.warning("App destination rejected: %s", exc)
@@ -397,8 +395,6 @@ class App:
                 detail = f"WebUI event verification failed: {exc}"
             elif isinstance(exc, TimeoutError):
                 status, detail = 504, "WebUI verification timed out"
-            elif isinstance(exc, _DestinationError):
-                detail = str(exc)
             elif isinstance(exc, ClientSSLError):
                 detail = (
                     "WebUI TLS verification failed. Check its certificate and hostname."

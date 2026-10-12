@@ -15,7 +15,6 @@ from fastapi import FastAPI
 
 from oix import Action, APIError, App, AppChannelReply, Client
 from oix.app import _EventError
-from oix.client import _check_address, _PublicResolver
 from oix.fastapi import create_router
 from oix.models import EventType, Scope
 
@@ -324,9 +323,6 @@ async def test_builtin_server_auth_limits_and_verified_dispatch(
 @pytest.mark.parametrize(
     "url",
     [
-        "http://public.example",
-        "https://127.0.0.1",
-        "https://[::1]",
         "https://user:password@public.example",
         "https://public.example/path",
         "https://public.example?query=1",
@@ -337,37 +333,6 @@ async def test_builtin_server_auth_limits_and_verified_dispatch(
 def test_block_unsafe_destinations(app, url):
     with pytest.raises(ValueError):
         app.client(url, "installed")
-
-
-@pytest.mark.parametrize(
-    "address",
-    [
-        "127.0.0.1",
-        "10.0.0.1",
-        "169.254.169.254",
-        "::1",
-        "::ffff:8.8.8.8",
-        "64:ff9b::808:808",
-        "224.0.0.1",
-    ],
-)
-def test_block_nonpublic_addresses(address):
-    with pytest.raises(ValueError):
-        _check_address(address)
-
-
-async def test_dns_results_checked_at_connection_resolution(monkeypatch):
-    monkeypatch.setattr(
-        aiohttp.resolver.ThreadedResolver,
-        "resolve",
-        AsyncMock(
-            return_value=[{"host": "127.0.0.1"}],
-        ),
-    )
-    resolver = _PublicResolver()
-    with pytest.raises(ValueError):
-        await resolver.resolve("rebound.example", 443)
-    await resolver.close()
 
 
 async def test_runtime_requests_signing_etags_and_no_redirects(app):
@@ -408,7 +373,7 @@ async def test_runtime_requests_signing_etags_and_no_redirects(app):
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     origin = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
-    client = Client(origin, "installed", KEY, allowed_private_origins=(origin,))
+    client = Client(origin, "installed", KEY)
     try:
         await client.list_messages("channel-1", before="cursor", parent_id="thread")
         assert calls[-1][2] == {

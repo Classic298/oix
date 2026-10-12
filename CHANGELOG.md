@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.4] - 2026-10-12
+
+- Accept HTTP and private WebUI origins after API-key authentication without extra configuration.
+- Replace `allowed_private_origins` / `OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS` with an optional `allowed_origins` / `OPEN_WEBUI_ALLOWED_ORIGINS` allowlist that restricts all WebUI origins when set.
+
 ## [0.4.3] - 2026-10-12
 
 - Require the app API key for manifest discovery in both HTTP adapters. WebUI must send the key when fetching app details.

@@ -1,6 +1,5 @@
-"""Small async client with signed requests and checked network destinations."""
+"""Small async client with signed requests and an optional origin allowlist."""
 
-import ipaddress
 import json
 import re
 import time
@@ -53,10 +52,6 @@ class APIError(Exception):
         super().__init__(message)
 
 
-class _DestinationError(ValueError):
-    """A destination rejected by the SDK's network policy."""
-
-
 def _origin(value: str) -> str:
     try:
         url = urlsplit(value)
@@ -83,37 +78,6 @@ def _origin(value: str) -> str:
     return f"{url.scheme}://{host}{suffix}"
 
 
-def _check_address(host: str) -> None:
-    address = ipaddress.ip_address(host)
-    if (
-        not address.is_global
-        or address.is_multicast
-        or (
-            isinstance(address, ipaddress.IPv6Address)
-            and (
-                address.ipv4_mapped
-                or address.sixtofour
-                or address.teredo
-                or address in ipaddress.ip_network("64:ff9b::/96")
-                or address in ipaddress.ip_network("64:ff9b:1::/48")
-            )
-        )
-    ):
-        raise _DestinationError(
-            "WebUI resolves to a private or reserved address. For local development, "
-            "allow its exact origin with allowed_private_origins or "
-            "OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS."
-        )
-
-
-class _PublicResolver(aiohttp.resolver.ThreadedResolver):
-    async def resolve(self, host, port=0, family=0):
-        addresses = await super().resolve(host, port, family)
-        for address in addresses:
-            _check_address(address["host"])
-        return addresses
-
-
 class Client:
     """Bound to one installation; construct a new client for each event destination."""
 
@@ -123,30 +87,17 @@ class Client:
         app_id: str,
         private_key: Ed25519PrivateKey,
         *,
-        allowed_private_origins: tuple[str, ...] = (),
+        allowed_origins: tuple[str, ...] = (),
     ):
         self.webui_url = _origin(webui_url)
         if not isinstance(app_id, str) or not 1 <= len(app_id) <= 100:
             raise ValueError("Invalid app ID")
         self.app_id = app_id
         self._private_key = private_key
-        self._allow_private = self.webui_url in {
-            _origin(value) for value in allowed_private_origins
-        }
-        if not self._allow_private:
-            if not self.webui_url.startswith("https://"):
-                raise _DestinationError(
-                    "WebUI requires HTTPS. For local HTTP development, allow its exact "
-                    "origin with allowed_private_origins or "
-                    "OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS."
-                )
-            host = urlsplit(self.webui_url).hostname
-            try:
-                ipaddress.ip_address(host)
-            except ValueError:
-                pass
-            else:
-                _check_address(host)
+        if allowed_origins and self.webui_url not in {
+            _origin(value) for value in allowed_origins
+        }:
+            raise PermissionError("WebUI origin is not in OPEN_WEBUI_ALLOWED_ORIGINS")
 
     def _sign(self, challenge: str | None = None) -> str:
         now = int(time.time())
@@ -174,10 +125,6 @@ class Client:
                 raise ValueError("Use the unquoted etag returned by Open WebUI")
             headers["If-Match"] = f'"{etag}"'
         async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(
-                resolver=None if self._allow_private else _PublicResolver(),
-                use_dns_cache=False,
-            ),
             timeout=aiohttp.ClientTimeout(total=10),
             trust_env=False,
         ) as session:
