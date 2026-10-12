@@ -79,6 +79,49 @@ def test_credentials(monkeypatch, tmp_path):
         App(**args, api_key=API_KEY)
 
 
+@pytest.mark.parametrize(
+    "api_key", ["short-key", "a" * 31, "a" * 32, "key,with,commas"]
+)
+def test_api_key_length_warns_without_blocking_authentication(api_key, caplog):
+    with caplog.at_level(logging.WARNING, logger="oix.app"):
+        app = App(
+            manifest_id="hello",
+            name="Hello",
+            scopes=[],
+            api_key=api_key,
+            private_key=PEM,
+        )
+    app.authenticate("Bearer " + api_key)
+    with pytest.raises(PermissionError):
+        app.authenticate("Bearer wrong-key")
+    assert ("shorter than 32 characters" in caplog.text) == (len(api_key) < 32)
+    assert api_key not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "api_key",
+    [
+        "",
+        "with spaces",
+        "line\nbreak",
+        "tab\tkey",
+        "nul\x00key",
+        "delete\x7fkey",
+        "non-ascii-🔑",
+        "a" * 4097,
+    ],
+)
+def test_unusable_api_keys_are_rejected(api_key):
+    with pytest.raises(ValueError, match="API_KEY"):
+        App(
+            manifest_id="hello",
+            name="Hello",
+            scopes=[],
+            api_key=api_key,
+            private_key=PEM,
+        )
+
+
 def test_registration_validation():
     app = make_app()
     with pytest.raises(TypeError, match="async"):
