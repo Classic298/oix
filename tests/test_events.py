@@ -1,19 +1,13 @@
 import asyncio
 import copy
 import logging
-from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
-import httpx
 import pytest
-from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
-from fastapi import FastAPI, HTTPException
-from test_sdk import API_KEY, AUTH, PEM, authorized, mention
+from test_sdk import API_KEY, PEM, authorized, bound, mention
 
-from oix import Action, APIError, App, Client, Event
+from oix import Action, App, Client, Event
 from oix.app import _EventError
-from oix.fastapi import create_router
 
 
 def make_app(**kwargs):
@@ -32,7 +26,7 @@ def message(**changes):
         id="event-1",
         type="channel.message.created",
         app_id="installed-1",
-        webui_url="https://webui.example",
+        installation_id="https://webui.example",
         channel={"id": "channel-1"},
         message={
             "id": "message-1",
@@ -150,7 +144,7 @@ async def test_bound_helpers_and_serialization(monkeypatch, parent):
     calls = []
 
     async def create(client, channel_id, **kwargs):
-        calls.append((client.webui_url, client.app_id, channel_id, kwargs))
+        calls.append((client.installation_id, client.app_id, channel_id, kwargs))
         return {"id": "new", "etag": "1"}
 
     monkeypatch.setattr(Client, "create_message", create)
@@ -163,12 +157,12 @@ async def test_bound_helpers_and_serialization(monkeypatch, parent):
         assert (await event.send("hello"))["id"] == "new"
         await event.reply("reply", actions=[Action(action_id="ok", label="OK")])
 
-    await app.handle_event(payload, authorization=AUTH)
+    await app.handle_event(payload, client=bound(payload))
     await app.close()
     assert calls[0][3] == dict(content="hello", actions=None, parent_id=parent)
     assert calls[1][3]["reply_to_id"] == "message-1"
     assert calls[1][3]["parent_id"] == parent
-    assert calls[0][:3] == (payload["webui_url"], payload["app_id"], "channel-1")
+    assert calls[0][:3] == (payload["installation_id"], payload["app_id"], "channel-1")
     event = Event.model_validate(payload)
     with pytest.raises(RuntimeError, match="verified client"):
         _ = event.client
@@ -198,12 +192,12 @@ async def test_mentions_use_signed_thread_and_string_reply(monkeypatch):
         await event.reply("public")
         return "private"
 
-    result = await app.handle_event(payload, authorization=AUTH)
+    result = await app.handle_event(payload, client=bound(payload))
     assert result["content"] == "private" and result["visibility"] == "private"
     assert send.call_args.kwargs["parent_id"] == "thread"
     payload["data"]["parent_id"] = "forged"
     with pytest.raises(_EventError) as exc:
-        await app.handle_event(payload, authorization=AUTH)
+        await app.handle_event(payload, client=bound(payload))
     assert exc.value.status == 403
     send.assert_awaited_once()
 
@@ -218,12 +212,12 @@ async def test_exact_action_precedes_generic(monkeypatch):
     p["type"] = "channel.action"
     p["data"] = {"action_id": "confirm"}
     monkeypatch.setattr(Client, "authorize", AsyncMock(return_value=authorized(p)))
-    assert (await app.handle_event(p, authorization=AUTH))["content"] == "exact"
+    assert (await app.handle_event(p, client=bound(p)))["content"] == "exact"
     generic.assert_not_called()
     exact.assert_awaited_once()
     p["data"] = {"action_id": "other"}
     monkeypatch.setattr(Client, "authorize", AsyncMock(return_value=authorized(p)))
-    assert (await app.handle_event(p, authorization=AUTH))["content"] == "generic"
+    assert (await app.handle_event(p, client=bound(p)))["content"] == "generic"
 
 
 async def test_ack_capacity_and_drain(monkeypatch):
@@ -237,16 +231,16 @@ async def test_ack_capacity_and_drain(monkeypatch):
         started.set()
         await finish.wait()
 
-    assert await app.handle_event(p, authorization=AUTH) == {"received": True}
+    assert await app.handle_event(p, client=bound(p)) == {"received": True}
     await started.wait()
     with pytest.raises(_EventError) as exc:
-        await app.handle_event(p, authorization=AUTH)
+        await app.handle_event(p, client=bound(p))
     assert exc.value.status == 503
     closing = asyncio.create_task(app.close())
     await asyncio.sleep(0)
     assert not closing.done()
     with pytest.raises(_EventError) as exc:
-        await app.handle_event(p, authorization=AUTH)
+        await app.handle_event(p, client=bound(p))
     assert exc.value.status == 503
     finish.set()
     await closing
@@ -265,10 +259,10 @@ async def test_verification_reserves_capacity_and_shutdown_cancels(monkeypatch):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(Client, "verify_event", verify)
-    task = asyncio.create_task(app.handle_event(message(), authorization=AUTH))
+    task = asyncio.create_task(app.handle_event(message(), client=bound(message())))
     await started.wait()
     with pytest.raises(_EventError) as exc:
-        await app.handle_event(message(), authorization=AUTH)
+        await app.handle_event(message(), client=bound(message()))
     assert exc.value.status == 503
     monkeypatch.setattr(module, "SHUTDOWN_TIMEOUT", 0.01)
     await app.close()
@@ -291,7 +285,7 @@ async def test_shutdown_cancels_running_handler(monkeypatch):
         finally:
             cancelled.set()
 
-    await app.handle_event(p, authorization=AUTH)
+    await app.handle_event(p, client=bound(p))
     await started.wait()
     monkeypatch.setattr(module, "SHUTDOWN_TIMEOUT", 0.01)
     await app.close()
@@ -314,7 +308,7 @@ async def test_self_filter(monkeypatch, ignore, author, expected):
     verified_messages(monkeypatch, p)
     handler = AsyncMock(return_value=None)
     app.on(p["type"])(handler)
-    await app.handle_event(p, authorization=AUTH)
+    await app.handle_event(p, client=bound(p))
     await app.close()
     assert handler.await_count == expected
 
@@ -322,7 +316,7 @@ async def test_self_filter(monkeypatch, ignore, author, expected):
 async def test_instances_remain_bound_during_concurrent_work(monkeypatch):
     app = make_app()
     p = message()
-    other = message(app_id="second", webui_url="https://second.example")
+    other = message(app_id="second", installation_id="https://second.example")
     verified_messages(monkeypatch, p, other)
     release = asyncio.Event()
     seen = []
@@ -330,11 +324,11 @@ async def test_instances_remain_bound_during_concurrent_work(monkeypatch):
     @app.on(p["type"])
     async def handler(event):
         await release.wait()
-        seen.append((event.client.webui_url, event.client.app_id))
+        seen.append((event.client.installation_id, event.client.app_id))
 
     await asyncio.gather(
-        app.handle_event(p, authorization=AUTH),
-        app.handle_event(other, authorization=AUTH),
+        app.handle_event(p, client=bound(p)),
+        app.handle_event(other, client=bound(other)),
     )
     release.set()
     await app.close()
@@ -342,74 +336,6 @@ async def test_instances_remain_bound_during_concurrent_work(monkeypatch):
         ("https://webui.example", "installed-1"),
         ("https://second.example", "second"),
     }
-
-
-@pytest.mark.parametrize("adapter", ["fastapi", "aiohttp"])
-async def test_handler_errors_and_utf8_response(monkeypatch, caplog, adapter):
-    app = make_app()
-    p = mention()
-    monkeypatch.setattr(Client, "authorize", AsyncMock(return_value=authorized(p)))
-    handler = AsyncMock()
-    app.on(p["type"])(handler)
-    if adapter == "fastapi":
-        server = FastAPI()
-        server.include_router(create_router(app))
-        client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=server, raise_app_exceptions=False),
-            base_url="http://test",
-        )
-
-        async def post():
-            r = await client.post("/events", json=p, headers={"Authorization": AUTH})
-            return r.status_code, r.content
-    else:
-        run = Mock()
-        monkeypatch.setattr(web, "run_app", run)
-        app.run()
-        client = TestClient(TestServer(run.call_args.args[0]))
-
-        async def post():
-            r = await client.post("/events", json=p, headers={"Authorization": AUTH})
-            return r.status, await r.read()
-
-    async with client:
-        for error in [KeyError("broken handler"), APIError(500)]:
-            handler.side_effect = error
-            with caplog.at_level(logging.ERROR):
-                status, _ = await post()
-            assert status == 500
-            assert any(
-                r.exc_info and "Handler failed" in r.message for r in caplog.records
-            )
-        handler.side_effect = None
-        handler.return_value = "😀" * 32000
-        status, body = await post()
-        assert status == 200 and len(body) < 262144
-    await app.close()
-
-
-async def test_fastapi_native_error_and_host_lifespan(monkeypatch):
-    app = make_app()
-    p = mention()
-    order = []
-    monkeypatch.setattr(Client, "authorize", AsyncMock(return_value=authorized(p)))
-    app.on(p["type"])(AsyncMock(side_effect=HTTPException(409, "Already used")))
-
-    @asynccontextmanager
-    async def lifespan(server):
-        order.append("start")
-        yield
-        order.append("stop")
-
-    server = FastAPI(lifespan=lifespan)
-    server.include_router(create_router(app))
-    async with server.router.lifespan_context(server):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=server), base_url="http://test"
-        ) as client:
-            r = await client.post("/events", json=p, headers={"Authorization": AUTH})
-            assert r.status_code == 409
-    assert order == ["start", "stop"] and app._closing
 
 
 @pytest.mark.parametrize(
@@ -444,7 +370,7 @@ async def test_deadlines(monkeypatch, phase):
         )
         app.on(p["type"])(slow)
     with pytest.raises(_EventError) as exc:
-        await app.handle_event(p, authorization=AUTH)
+        await app.handle_event(p, client=bound(p))
     assert exc.value.status == 504
     assert app._active_messages == 0
 
@@ -455,93 +381,25 @@ async def test_background_invalid_return_is_logged(monkeypatch, caplog):
     verified_messages(monkeypatch, p)
     app.on(p["type"])(AsyncMock(return_value="incorrect"))
     with caplog.at_level(logging.ERROR):
-        assert await app.handle_event(p, authorization=AUTH) == {"received": True}
+        assert await app.handle_event(p, client=bound(p)) == {"received": True}
         await app.close()
     assert "use event.send() or event.reply()" in caplog.text
-
-
-async def test_api_error_detail_is_bounded():
-    async def fail(request):
-        return web.Response(status=422, body=b"x" * 100000)
-
-    server = web.Application()
-    server.router.add_get("/api/v1/apps/runtime/me", fail)
-    async with TestServer(server) as upstream:
-        app = make_app()
-        origin = str(upstream.make_url("")).rstrip("/")
-        client = Client(origin, "installed", app._private_key)
-        with pytest.raises(APIError) as exc:
-            await client.get_me()
-        error = exc.value
-        assert (error.status, error.method, error.path) == (422, "GET", "/me")
-        assert len(error.detail.encode()) == 65536
-        assert "Bearer" not in str(error)
-
-
-@pytest.mark.parametrize("adapter", ["fastapi", "aiohttp"])
-async def test_http_ack_precedes_handler_completion(monkeypatch, adapter):
-    app = make_app(max_concurrency=1)
-    payload = message()
-    verified_messages(monkeypatch, payload)
-    started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
-
-    @app.on(payload["type"])
-    async def handle(event):
-        started.set()
-        await release.wait()
-        finished.set()
-
-    if adapter == "fastapi":
-        server = FastAPI()
-        server.include_router(create_router(app))
-        client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=server), base_url="http://test"
-        )
-
-        async def post():
-            response = await client.post(
-                "/events", json=payload, headers={"Authorization": AUTH}
-            )
-            return response.status_code, response.json()
-    else:
-        run = Mock()
-        monkeypatch.setattr(web, "run_app", run)
-        app.run()
-        client = TestClient(TestServer(run.call_args.args[0]))
-
-        async def post():
-            response = await client.post(
-                "/events", json=payload, headers={"Authorization": AUTH}
-            )
-            return response.status, await response.json()
-
-    async with client:
-        async with asyncio.timeout(2):
-            assert await post() == (200, {"received": True})
-            await started.wait()
-        assert not finished.is_set()
-        assert (await post())[0] == 503
-        release.set()
-        await app.close()
-        assert finished.is_set()
-        assert (await post())[0] == 503
 
 
 async def test_unregistered_valid_event_only_acknowledged(monkeypatch):
     app = make_app()
     payload = message()
     verified_messages(monkeypatch, payload)
-    assert await app.handle_event(payload, authorization=AUTH) == {"received": True}
+    assert await app.handle_event(payload, client=bound(payload)) == {"received": True}
     assert not app._tasks and app._active_messages == 0
 
 
 async def test_client_validates_replacement_values(monkeypatch):
-    app = make_app()
-    client = app.client("https://webui.example", "installed")
+    client = bound(dict(installation_id="one", app_id="installed"))
     request = AsyncMock(return_value={"id": "message", "etag": "2"})
     monkeypatch.setattr(client, "_request", request)
     await client.update_message("message", content="done", etag="1")
-    assert request.call_args.kwargs["json_body"]["actions"] == []
+    assert request.call_args.kwargs["actions"] == []
     request.reset_mock()
     with pytest.raises(ValueError):
         await client.create_message("channel", content="x" * 32001)

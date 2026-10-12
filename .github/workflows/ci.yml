@@ -11,6 +11,12 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+    env:
+      TEST_REDIS_URL: redis://127.0.0.1:6379
     strategy:
       matrix:
         python: ['3.11', '3.12', '3.13', '3.14']
@@ -19,7 +25,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
-      - run: uv sync --locked --extra fastapi
+      - run: uv sync --locked --extra fastapi --extra redis
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest -q

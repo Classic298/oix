@@ -1,18 +1,25 @@
-"""Optional FastAPI adapter. Mount GET discovery and POST events at any path."""
+"""Mount authenticated manifest discovery and Socket.IO on a FastAPI router."""
 
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, HTTPException, Request
+import socketio
+from fastapi import APIRouter, HTTPException, Request, WebSocket
 
-from .app import MAX_EVENT_BYTES, App, _EventError
+from .app import App
 
 
 def create_router(
     app: App, *, path: str = "/events", manifest: bool = True
 ) -> APIRouter:
+    socket = app._get_socket("asgi")
+    endpoint = path.rstrip("/") + "/socket.io/"
+    # FastAPI already matched this route, including any host router prefix.
+    transport = socketio.ASGIApp(socket.server, socketio_path=None)
+
     @asynccontextmanager
     async def lifespan(server):
         try:
+            await socket.start()
             yield
         finally:
             await app.close()
@@ -30,19 +37,19 @@ def create_router(
 
     @router.post(path)
     async def events(request: Request):
-        authorization = request.headers.get("authorization", "")
         try:
-            app.authenticate(authorization)
+            app.authenticate(request.headers.get("authorization", ""))
         except PermissionError:
             raise HTTPException(401, "Invalid app API key") from None
-        body = bytearray()
-        async for chunk in request.stream():
-            body.extend(chunk)
-            if len(body) > MAX_EVENT_BYTES:
-                raise HTTPException(413, "Payload too large")
+        raise HTTPException(426, "Upgrade to oix 0.5: events use Socket.IO")
+
+    @router.websocket(endpoint)
+    async def connection(websocket: WebSocket):
         try:
-            return await app._handle_body(body, authorization)
-        except _EventError as exc:
-            raise HTTPException(exc.status, exc.detail) from None
+            app.authenticate(websocket.headers.get("authorization", ""))
+        except PermissionError:
+            await websocket.close(code=1008)
+            return
+        await transport(websocket.scope, websocket.receive, websocket.send)
 
     return router

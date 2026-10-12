@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.0]
+
+- Move event delivery and runtime operations to authenticated Socket.IO connections initiated by WebUI. Private WebUI instances need no inbound endpoint.
+- Preserve installation identity across restarts using app-issued reconnect credentials stored by WebUI.
+- Add optional Redis routing for multiple app replicas and multiple WebUI workers; target one connection per operation.
+- Expose `event.installation_id` and `app.client(installation_id)` for durable destinations. Remove URL-based clients and origin settings.
+- Distinguish disconnected operations from uncertain outcomes without retrying message creation.
+- Existing installations require one reconnect after upgrading WebUI and the SDK together. Recreate URL-based subscriptions explicitly.
+
 ## [0.4.4] - 2026-10-12
 
 - Accept HTTP and private WebUI origins after API-key authentication without extra configuration.

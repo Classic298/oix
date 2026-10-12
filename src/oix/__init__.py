@@ -1,7 +1,7 @@
 """Build external apps for Open WebUI."""
 
 from .app import App
-from .client import APIError, Client
+from .client import APIError, Client, ConnectionLost, ConnectionUnavailable
 from .models import Action, AppChannelMessage, AppChannelReply, Event
 
 __all__ = [
@@ -11,5 +11,7 @@ __all__ = [
     "AppChannelMessage",
     "AppChannelReply",
     "Client",
+    "ConnectionLost",
+    "ConnectionUnavailable",
     "Event",
 ]

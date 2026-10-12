@@ -1,6 +1,6 @@
 [project]
 name = "oix"
-version = "0.4.4"
+version = "0.5.0"
 description = "Build external apps for Open WebUI"
 readme = "README.md"
 authors = [{ name = "Tim Baek", email = "tim@openwebui.com" }]
@@ -9,6 +9,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
     "aiohttp>=3.12,<4",
+    "python-socketio>=5.16.2,<6",
     "cryptography>=44",
     "PyJWT>=2.10,<3",
     "pydantic>=2.10,<3",
@@ -16,9 +17,10 @@ dependencies = [
 
 [project.optional-dependencies]
 fastapi = ["fastapi>=0.115,<1"]
+redis = ["redis>=5,<9"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "httpx>=0.28", "ruff>=0.11", "twine>=6"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "httpx>=0.28", "ruff>=0.11", "twine>=6", "uvicorn[standard]>=0.30"]
 
 [build-system]
 requires = ["hatchling>=1.27"]

@@ -87,6 +87,12 @@ jobs:
     needs: preflight
     if: github.ref == 'refs/heads/main' && (needs.preflight.outputs.publish_needed == 'true' || needs.preflight.outputs.release_assets_needed == 'true')
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+    env:
+      TEST_REDIS_URL: redis://127.0.0.1:6379
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -101,7 +107,7 @@ jobs:
 
       - name: Test
         run: |
-          uv sync --locked --extra fastapi
+          uv sync --locked --extra fastapi --extra redis
           uv run ruff check .
           uv run ruff format --check .
           uv run pytest -q

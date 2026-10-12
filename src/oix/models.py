@@ -62,7 +62,7 @@ class Event(BaseModel):
     id: str = Field(min_length=1, max_length=100)
     type: EventType
     app_id: str = Field(min_length=1, max_length=100)
-    webui_url: str
+    installation_id: str
     actor: dict[str, Any] = Field(default_factory=dict)
     channel: dict[str, Any]
     data: dict[str, Any] = Field(default_factory=dict)

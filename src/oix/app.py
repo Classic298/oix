@@ -12,18 +12,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, get_args
 
-from aiohttp import (
-    ClientConnectorDNSError,
-    ClientConnectorError,
-    ClientError,
-    ClientSSLError,
-    web,
-)
+from aiohttp import web
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import HttpUrl
 
-from .client import APIError, Client, _origin
+from .client import APIError, Client, ConnectionLost, ConnectionUnavailable
 from .models import AppChannelReply, Event, EventType, Scope
 
 Handler = Callable[[Event], Awaitable[AppChannelReply | str | None]]
@@ -58,7 +52,7 @@ class App:
         private_key: str | None = None,
         description: str = "",
         profile_image_url: str | Path | None = None,
-        allowed_origins: tuple[str, ...] | None = None,
+        redis_url: str | None = None,
         ignore_self_events: bool = True,
         max_concurrency: int = 32,
     ):
@@ -120,22 +114,6 @@ class App:
             raise ValueError("Invalid app scopes")
         if type(max_concurrency) is not int or max_concurrency < 1:
             raise ValueError("max_concurrency must be a positive integer")
-        if allowed_origins is None:
-            allowed_origins = tuple(
-                value.strip()
-                for value in os.environ.get("OPEN_WEBUI_ALLOWED_ORIGINS", "").split(",")
-                if value.strip()
-            )
-        try:
-            if isinstance(allowed_origins, str):
-                raise ValueError
-            allowed_origins = tuple(_origin(value) for value in allowed_origins)
-        except (ValueError, TypeError, AttributeError):
-            raise ValueError(
-                "allowed_origins / OPEN_WEBUI_ALLOWED_ORIGINS must "
-                "contain HTTP(S) origins without paths, credentials, "
-                "queries or fragments."
-            ) from None
         if isinstance(profile_image_url, Path):
             mime = {
                 ".png": "image/png",
@@ -188,7 +166,8 @@ class App:
                 ) from None
         self._api_key = api_key
         self._private_key = key
-        self._allowed_origins = allowed_origins
+        self._redis_url = redis_url
+        self._socket = None
         self._ignore_self_events = ignore_self_events
         self._max_concurrency = max_concurrency
         self._active_messages = 0
@@ -220,13 +199,19 @@ class App:
         ):
             raise PermissionError("Invalid app API key")
 
-    def client(self, webui_url: str, app_id: str) -> Client:
-        return Client(
-            webui_url,
-            app_id,
-            self._private_key,
-            allowed_origins=self._allowed_origins,
-        )
+    def client(self, installation_id: str) -> Client:
+        if self._socket is None:
+            raise ConnectionUnavailable("App transport has not started")
+        return Client(installation_id, transport=self._socket)
+
+    def _get_socket(self, mode):
+        from .socket import AppSocket
+
+        if self._socket is None:
+            self._socket = AppSocket(self, mode=mode, redis_url=self._redis_url)
+        elif self._socket.mode != mode:
+            raise RuntimeError("An app cannot use two server adapters at once")
+        return self._socket
 
     def _register(self, handlers: dict[str, Handler], key: str):
         def register(handler: Handler) -> Handler:
@@ -266,7 +251,7 @@ class App:
         path: str = "/events",
         manifest: bool = True,
     ) -> None:
-        """Serve HTTP events until shutdown. Call after registering handlers."""
+        """Serve app connections until shutdown. Call after registering handlers."""
         logger = logging.getLogger("oix")
         if not logger.hasHandlers():
             handler = logging.StreamHandler()
@@ -276,35 +261,35 @@ class App:
             logger.addHandler(handler)
             if logger.level == logging.NOTSET:
                 logger.setLevel(logging.INFO)
-        server = web.Application(client_max_size=MAX_EVENT_BYTES)
 
-        async def discovery(request):
+        @web.middleware
+        async def authenticate(request, handler):
             try:
                 self.authenticate(request.headers.get("authorization", ""))
             except PermissionError:
                 raise web.HTTPUnauthorized(text="Invalid app API key") from None
+            return await handler(request)
+
+        server = web.Application(
+            client_max_size=MAX_EVENT_BYTES, middlewares=[authenticate]
+        )
+        socket = self._get_socket("aiohttp")
+        socket.server.attach(server, socketio_path=path.strip("/") + "/socket.io")
+
+        async def discovery(request):
             return web.json_response(self.manifest, dumps=_json_dumps)
 
         async def events(request):
-            authorization = request.headers.get("authorization", "")
-            try:
-                self.authenticate(authorization)
-            except PermissionError:
-                raise web.HTTPUnauthorized(text="Invalid app API key") from None
-            body = bytearray()
-            async for chunk in request.content.iter_chunked(65536):
-                body.extend(chunk)
-                if len(body) > MAX_EVENT_BYTES:
-                    raise web.HTTPRequestEntityTooLarge(
-                        max_size=MAX_EVENT_BYTES, actual_size=len(body)
-                    )
-            try:
-                result = await self._handle_body(body, authorization)
-            except _EventError as exc:
-                return web.json_response({"detail": exc.detail}, status=exc.status)
-            return web.json_response(result, dumps=_json_dumps)
+            return web.json_response(
+                {"detail": "Upgrade to oix 0.5: events use Socket.IO"}, status=426
+            )
 
         async def startup(server):
+            try:
+                await socket.start()
+            except Exception:
+                await self.close()
+                raise
             log.info("Serving app %s on %s:%s%s", self.manifest["id"], host, port, path)
 
         async def shutdown(server):
@@ -317,18 +302,8 @@ class App:
         server.on_shutdown.append(shutdown)
         web.run_app(server, host=host, port=port)
 
-    async def _handle_body(self, body: bytes, authorization: str) -> dict:
-        try:
-            payload = json.loads(body)
-        except (ValueError, UnicodeError):
-            raise _EventError(400, "Invalid JSON") from None
-        return await self.handle_event(payload, authorization=authorization)
-
-    async def handle_event(
-        self, payload: dict[str, Any], *, authorization: str
-    ) -> dict:
-        """Verify an event before invoking or scheduling its handler."""
-        self.authenticate(authorization)
+    async def handle_event(self, payload: dict[str, Any], *, client: Client) -> dict:
+        """Called only with a client bound by the authenticated socket transport."""
         if self._closing:
             raise _EventError(503, "App is shutting down")
         try:
@@ -339,32 +314,11 @@ class App:
                 or not 1 <= len(payload["id"]) <= 100
             ):
                 raise ValueError("Invalid event ID")
-            if not isinstance(payload.get("webui_url"), str):
-                raise ValueError("Missing WebUI origin")
             if (
-                not isinstance(payload.get("app_id"), str)
-                or not 1 <= len(payload["app_id"]) <= 100
+                payload.get("installation_id") != client.installation_id
+                or payload.get("app_id") != client.app_id
             ):
-                raise ValueError("Invalid installation ID")
-            try:
-                client = self.client(payload["webui_url"], payload["app_id"])
-            except PermissionError as exc:
-                raise _EventError(403, str(exc)) from None
-            except ValueError as exc:
-                # Client validation messages exclude credentials and event bodies.
-                log.warning("App destination rejected: %s", exc)
-                raise _EventError(400, str(exc)) from None
-            if payload.get("type") == "connect":
-                challenge = payload.get("data", {}).get("challenge")
-                if not isinstance(challenge, str) or not 16 <= len(challenge) <= 128:
-                    raise ValueError("Invalid connection challenge")
-                log.info(
-                    "App identity proof issued: origin=%s app=%s; "
-                    "callback reachability is not tested",
-                    client.webui_url,
-                    client.app_id,
-                )
-                return {"proof": client._sign(challenge)}
+                raise _EventError(403, "Event installation mismatch")
             event = Event.model_validate(payload)
             ordinary = event.type.startswith("channel.message.")
             token = payload["event_token" if ordinary else "execution_token"]
@@ -391,10 +345,10 @@ class App:
                     and author.get("id") == event.app_id
                 ):
                     log.debug(
-                        "Ignoring self event: type=%s event=%s origin=%s app=%s",
+                        "Ignoring self event: type=%s event=%s installation=%s app=%s",
                         event.type,
                         event.id,
-                        event.webui_url,
+                        event.installation_id,
                         event.app_id,
                     )
                     return {"received": True}
@@ -409,10 +363,10 @@ class App:
                     transferred = True
                 else:
                     log.debug(
-                        "No handler: type=%s event=%s origin=%s app=%s",
+                        "No handler: type=%s event=%s installation=%s app=%s",
                         event.type,
                         event.id,
-                        event.webui_url,
+                        event.installation_id,
                         event.app_id,
                     )
                 return {"received": True}
@@ -445,39 +399,32 @@ class App:
                 verified = await (
                     client.verify_event(token) if ordinary else client.authorize(token)
                 )
-        except (APIError, TimeoutError, ClientError, ValueError, TypeError) as exc:
+        except (
+            APIError,
+            TimeoutError,
+            ConnectionUnavailable,
+            ConnectionLost,
+            ValueError,
+            TypeError,
+        ) as exc:
             status = 502
             if isinstance(exc, APIError):
                 status = 403 if exc.status in (401, 403, 404) else 502
                 detail = f"WebUI event verification failed: {exc}"
             elif isinstance(exc, TimeoutError):
                 status, detail = 504, "WebUI verification timed out"
-            elif isinstance(exc, ClientSSLError):
-                detail = (
-                    "WebUI TLS verification failed. Check its certificate and hostname."
-                )
-            elif isinstance(exc, ClientConnectorDNSError):
-                detail = (
-                    "WebUI hostname could not be resolved. "
-                    "Check DNS from the app server."
-                )
-            elif isinstance(exc, ClientConnectorError):
-                detail = (
-                    "Could not connect to WebUI. "
-                    "Check its address, port and network access."
-                )
-            elif isinstance(exc, ClientError):
-                detail = (
-                    "WebUI verification connection failed before receiving a response."
-                )
+            elif isinstance(exc, ConnectionUnavailable):
+                status, detail = 503, "WebUI is disconnected; verification was not sent"
+            elif isinstance(exc, ConnectionLost):
+                detail = "WebUI disconnected during verification"
             else:
                 detail = "WebUI returned an invalid verification response."
             log.warning(
                 "Event verification failed: type=%s event=%s "
-                "origin=%s app=%s reason=%s",
+                "installation=%s app=%s reason=%s",
                 event.type,
                 event.id,
-                client.webui_url,
+                client.installation_id,
                 client.app_id,
                 detail,
             )
@@ -501,10 +448,10 @@ class App:
                 event.message = None
         except (PermissionError, KeyError, TypeError, AttributeError):
             log.warning(
-                "Event context mismatch: type=%s event=%s origin=%s app=%s",
+                "Event context mismatch: type=%s event=%s installation=%s app=%s",
                 event.type,
                 event.id,
-                client.webui_url,
+                client.installation_id,
                 client.app_id,
             )
             raise _EventError(403, "Event context mismatch") from None
@@ -540,10 +487,10 @@ class App:
             return result
         except Exception:
             log.exception(
-                "Handler failed: type=%s event=%s origin=%s app=%s",
+                "Handler failed: type=%s event=%s installation=%s app=%s",
                 event.type,
                 event.id,
-                event.webui_url,
+                event.installation_id,
                 event.app_id,
             )
             raise
@@ -568,3 +515,6 @@ class App:
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
+
+        if self._socket is not None:
+            await self._socket.close()

@@ -1,6 +1,6 @@
 # oix: Open WebUI SDK
 
-A Python SDK for building apps for Open WebUI, with authenticated events and a signed API client.
+A Python SDK for building apps for Open WebUI, with authenticated events and an installation-bound client.
 
 Requires Python 3.11+ and Open WebUI with Apps support.
 
@@ -70,7 +70,14 @@ The app listens on port `8000` at `/events`. Keep it running while you connect i
 
 ## Connect to Open WebUI
 
-Your app and WebUI must be able to reach each other. For a deployed app, forward an HTTPS URL such as `https://hello.example.com/events` to the app's port `8000`. In **Settings → Admin → General → WebUI URL**, set the HTTP(S) address your app can reach. If this is empty, WebUI uses the connection request’s address. For two processes on your computer, use the [local development setup](#local-development) below first.
+WebUI opens an outbound socket to your app. For a deployed app, forward an HTTPS URL such as `https://hello.example.com/events` to port `8000`, with WebSocket upgrades enabled. WebUI can stay on localhost or a private network. You do not need to expose it or configure a callback URL.
+
+```text
+Private WebUI ── opens connection ──> Public app (for example, Railway)
+             <── events, replies and API calls use that same socket ──>
+```
+
+For two processes on your computer, use the [local development setup](#local-development).
 
 ### 1. Connect the app
 
@@ -80,7 +87,7 @@ Your app and WebUI must be able to reach each other. For a deployed app, forward
 4. Click **Continue**. WebUI authenticates with that key and loads the app's name, public key and requested scopes automatically. Keep `channels:messages:read` and `channels:messages:write` selected for this example, then click **Continue** to open the connection form.
 5. Check **Access**, then click **Connect**.
 
-The App URL points to your Python app. The SDK serves its manifest with GET and receives events with POST at that same URL; both require `Authorization: Bearer <API_KEY>`. You do not need a separate `/manifest` route. Opening the URL in a browser without the key returns 401.
+The App URL points to your Python app. The SDK serves its optional manifest with GET at that URL. Events and runtime calls use the `/events/socket.io/` WebSocket endpoint and the `/apps` namespace. Discovery and the socket handshake require `Authorization: Bearer <API_KEY>`. You do not need a separate `/manifest` route. Opening the URL in a browser without the key returns 401.
 
 ### 2. Invite it and send a message
 
@@ -109,7 +116,7 @@ python app.py
 
 Open WebUI at `http://127.0.0.1:8080` and follow the connection steps above, using **App URL** `http://127.0.0.1:8000/events`.
 
-WebUI's setting permits the local app endpoint. The SDK accepts HTTP and private WebUI callback addresses without extra configuration. With Docker or separate machines, replace these addresses with ones reachable from both processes; `127.0.0.1` inside a container points to that container.
+WebUI's setting permits the local app endpoint. With Docker or separate machines, use an app address reachable from WebUI; `127.0.0.1` inside a container points to that container. The app does not connect back to a WebUI address.
 
 ### Configuration
 
@@ -131,17 +138,21 @@ app = App(
 
 The file is read once when `App` is created. Relative paths use the process's working directory. PNG, JPEG, GIF and WebP are supported; the encoded data URL must fit within 192 KiB. Missing, unreadable or oversized files fail at startup.
 
-`manifest_id` identifies your app in its manifest. WebUI assigns a separate `app_id` to each installation; incoming events and their clients already carry that ID.
+`manifest_id` identifies your app in its manifest. WebUI assigns its local `app_id`; the app issues an independent `installation_id` during connection. Incoming events and their clients carry both.
 
 The SDK reads `API_KEY` and the PEM file at `APP_PRIVATE_KEY_FILE`. Explicit `api_key` and PEM `private_key` arguments override these defaults. Missing or invalid credentials fail at construction; startup never generates credentials.
 
-Use `app.run(port=8001, path="/events")` to change the listening port or endpoint. Pass `manifest=False` for a POST-only endpoint, then choose **Enter details manually** in WebUI. `app.manifest` supplies the app details, including its public key and requested scopes.
+Use `app.run(port=8001, path="/events")` to change the listening port or endpoint. Pass `manifest=False` to disable manifest discovery, then choose **Enter details manually** in WebUI. `app.manifest` supplies the app details, including its public key and requested scopes.
 
-By default, any instance with the API key can connect, including HTTP and private addresses. API-key holders are trusted to choose callback destinations reachable from the app server. Use HTTPS across untrusted networks.
+Any WebUI with the API key can install the app. WebUI pins the app's public key and verifies its signed connection proof. The app issues a signed reconnect credential, which WebUI stores encrypted. Possessing the shared API key does not let another installation claim an existing installation ID. Keep the API key private and use HTTPS across untrusted networks.
 
-To restrict accepted instances, optionally set `OPEN_WEBUI_ALLOWED_ORIGINS=https://one.example.com,https://two.example.com`. Only those exact origins (scheme, hostname and port) are then accepted, for connections and subsequent callbacks. This is an origin restriction, not an IP firewall. Explicit `allowed_origins=(...)` overrides the environment; unset or empty allows all origins. Invalid configured origins fail at startup.
+### Multiple workers and replicas
 
-This replaces `allowed_private_origins` / `OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS` in 0.4.4. Remove the old setting; use the new allowlist only when you want to restrict access.
+One process needs no Redis. For multiple app replicas, install `oix[redis]` (or `oix[fastapi,redis]`) and pass `redis_url="redis://..."` to `App`. All replicas must share that Redis, manifest ID, API key and private key. Redis stores expiring socket routes, not installation credentials. A background worker can route an API call through another replica's connection. Each call targets one WebUI socket. If Redis is unavailable, routing fails closed.
+
+Each WebUI worker opens its own outbound connection. WebSocket-only transport avoids polling affinity requirements. Configure the proxy's idle timeout above the 25-second ping interval and 20-second ping timeout. Use a shared database, `WEBUI_SECRET_KEY` and Redis for WebUI HA. Independent WebUI installations remain isolated.
+
+WebUI reconnects automatically with jittered backoff, up to 30 seconds. Restarting the app requires only its persistent credentials and, when using multiple replicas, the shared Redis configuration. An app needs business storage only for its own jobs or subscriptions.
 
 ## Events and replies
 
@@ -162,11 +173,11 @@ Ordinary channel-event handlers return `None`. Use `await event.send("...")` to 
 
 `event.content` contains created/updated message content or the original mention text, unchanged. `event.channel_id`, `event.message_id` and `event.parent_id` use verified source information. The original `actor`, `channel`, `message`, `data` and token fields remain available.
 
-Ordinary events are acknowledged after verification, then handlers run in background tasks. `max_concurrency=32` bounds verification and ordinary handlers together; overload returns HTTP 503 without queuing or retries. Acknowledged work does not survive a process crash. Delivery is best effort, can arrive out of order, and has no replay guarantee. Keep durable work in your own job storage.
+Ordinary events are acknowledged after verification, then handlers run in background tasks. `max_concurrency=32` bounds verification and ordinary handlers together; overload returns status 503 without queuing or retries. Acknowledged work does not survive a process crash. Delivery is best effort, can arrive out of order, and has no replay guarantee. Keep durable work in your own job storage.
 
 Self-authored message events are ignored by default for the current installation. Pass `ignore_self_events=False` to receive them. Other apps and model messages are not filtered. A mention can produce both a channel event and a mention interaction.
 
-Interactions have a 2.5-second processing budget, including at most two seconds for verification. Ordinary verification has eight seconds; acknowledged handlers have no HTTP deadline. Timeout cancellation does not undo external side effects. Return a deferred reply for longer interactions.
+Interactions have a 2.5-second processing budget, including at most two seconds for verification. Ordinary verification has eight seconds; acknowledged handlers have no acknowledgement deadline. Timeout cancellation does not undo external side effects. Return a deferred reply for longer interactions.
 
 Route buttons by exact action ID:
 
@@ -205,9 +216,9 @@ await event.client.update_message(message["id"], content="Done.", etag=message["
 
 Content and actions are replacement values when editing. Omitted actions become an empty list; include any buttons you want to retain. `AppChannelMessage` remains exported for independent validation.
 
-Available methods: `get_me()`, `list_channels()`, `list_messages(channel_id, limit=50, before=None, parent_id=None)`, `create_message(...)`, `update_message(...)`, `authorize(execution_token)`, and `verify_event(event_token)`. Responses are WebUI JSON dictionaries/lists. `APIError.status` exposes HTTP failures, including `412` for stale edits. `method`, `path` and `detail` provide request context and at most 64 KiB of response detail, without authorization headers. Transport failures use aiohttp exceptions or `TimeoutError`. Message creation is never automatically retried.
+Available methods: `get_me()`, `list_channels()`, `list_messages(channel_id, limit=50, before=None, parent_id=None)`, `create_message(...)`, `update_message(...)`, `authorize(execution_token)`, and `verify_event(event_token)`. Responses are WebUI JSON dictionaries/lists. `APIError.status` exposes operation failures, including `412` for stale edits. `method`, `path` and `detail` provide request context and at most 64 KiB of response detail, without authorization headers. `ConnectionUnavailable` means no route was available and the operation was not sent. `ConnectionLost` means dispatch began and its outcome may be unknown. Message creation is never automatically retried.
 
-One `App` can serve multiple independent WebUI instances. Each event supplies its WebUI origin and local installation ID; its client is bound to that pair. For proactive messages, save the destination URL and app ID alongside your subscription, then call `app.client(webui_url, app_id)` after restart. API-key holders are trusted to connect instances; a shared key does not provide tenant-specific business authorization.
+One `App` can serve multiple independent WebUI instances. For proactive messages, save `event.installation_id` with your subscription, then use `app.client(installation_id)` after restart. The transport must be running and a connection to that installation must be available. API-key holders are trusted to install apps; a shared key does not provide tenant-specific business authorization.
 
 ## Existing web servers
 
@@ -221,9 +232,9 @@ server = FastAPI()
 server.include_router(create_router(app, path="/events"))
 ```
 
-Run your existing server instead of calling `app.run()`. The router also accepts `manifest=False`. Its shutdown lifespan composes with your application's lifespan, including existing workers.
+Run your existing server instead of calling `app.run()`. Set its WebSocket frame limit to 1 MiB; with Uvicorn, use `--ws-max-size 1048576` (or `ws_max_size=1048576` in `uvicorn.run`). The router also accepts `manifest=False`. Its shutdown lifespan composes with your application's lifespan, including existing workers.
 
-For another web framework, call `app.authenticate(authorization)` before reading a body, enforce a 1 MiB body limit while streaming, parse JSON, then `await app.handle_event(payload, authorization=authorization)`. Return the resulting JSON with compact UTF-8 serialization. Responses are limited to 256 KiB of actual JSON bytes and message content to 32,000 characters. Call `await app.close()` during shutdown: it stops admission, waits up to 30 seconds for accepted handlers, then cancels and awaits remaining work. The built-in server and FastAPI adapter do this automatically.
+Use the built-in aiohttp server or the FastAPI router. Both authenticate before accepting the socket, enforce 1 MiB JSON packets, and reject binary packets. Interaction responses are limited to 256 KiB of compact UTF-8 JSON; message content remains limited to 32,000 characters. `await app.close()` stops admission, waits up to 30 seconds for accepted handlers, then cancels and awaits remaining work. Both adapters call it during shutdown.
 
 ## Troubleshooting
 
@@ -236,18 +247,34 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger("oix").setLevel(logging.DEBUG)
 ```
 
-Connection verifies the app's signing identity, not callback reachability. If connection succeeds but handlers never run, check the app's verification logs: the app must reach the WebUI origin over HTTP(S), and WebUI must still permit the installation, scope and channel access. The logs distinguish DNS, TLS, connection failures and timeouts. Ordinary self-authored events and events without registered handlers are acknowledged without running a handler.
+Connection verifies the app's signing identity and a round trip in both directions before WebUI marks it connected. If a connection fails, check the endpoint, API key, pinned public key and proxy WebSocket support. WebUI's app list shows Connected, Connecting or Disconnected. An upgraded HTTP installation must be reconnected once in admin settings.
 
-`APIError` includes the HTTP method, path, status and recognized WebUI error reason. Unknown response bodies remain available in its bounded `detail` attribute but are not included in default messages. Do not log response bodies or tokens indiscriminately. Handler programming errors retain their tracebacks.
+Events still check current installation, scope and channel access before executing. Self-authored ordinary events and events without registered handlers are acknowledged without running a handler. Removing membership or disabling an app blocks subsequent runtime operations, even on an already open socket.
+
+`APIError` includes the operation, status and recognized WebUI error reason. Unknown response bodies remain available in its bounded `detail` attribute but are not included in default messages. Do not log response bodies or tokens indiscriminately. Handler programming errors retain their tracebacks.
 
 ## Development
 
 ```sh
-uv sync --extra fastapi
+uv sync --locked --extra fastapi --extra redis
 uv run ruff check .
 uv run ruff format --check .
-uv run pytest
+TEST_REDIS_URL=redis://127.0.0.1:6379 uv run pytest
 uv build
 uv run twine check dist/*
 ```
 
+## Upgrading from 0.4.x
+
+Upgrade WebUI and oix together, then reconnect each existing app in admin settings. Existing app IDs, messages and memberships remain. No database migration is needed.
+
+Handlers and message helpers keep their signatures. Replace saved HTTP destinations:
+
+```python
+# Before
+client = app.client(webui_url, app_id)
+# Now: save event.installation_id when accepting a subscription or job
+client = app.client(installation_id)
+```
+
+`event.webui_url` and `allowed_origins` / `OPEN_WEBUI_ALLOWED_ORIGINS` are removed. There are no WebUI HTTP callbacks to allowlist. Existing subscriptions keyed by URLs must be recreated explicitly; do not assign them to an unrelated new installation.
