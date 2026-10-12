@@ -16,7 +16,7 @@ python -m pip install oix
 import os
 from pathlib import Path
 
-from oix import App, AppReply, Client, Event
+from oix import App, AppChannelReply, Client, Event
 
 app = App(
     id="hello",
@@ -27,9 +27,9 @@ app = App(
 )
 
 
-@app.on("mention")
-async def hello(event: Event, client: Client) -> AppReply:
-    return AppReply(content="Hello! Only you can see this reply.")
+@app.on("channel.mention")
+async def hello(event: Event, client: Client) -> AppChannelReply:
+    return AppChannelReply(content="Hello! Only you can see this reply.")
 
 
 if __name__ == "__main__":
@@ -60,16 +60,16 @@ For localhost development, pass the exact WebUI origin in `allowed_private_origi
 
 Register async handlers with `@app.on(...)` for:
 
-- `mention`: explicit app mentions; text is in `event.data["text"]`.
-- `action`: a saved message button; `event.data` contains `message_id`, `action_id`, and `context`.
+- `channel.mention`: explicit app mentions; text is in `event.data["text"]`.
+- `channel.action`: a saved message button; `event.data` contains `message_id`, `action_id`, and `context`.
 - `operation_status`: a status request for deferred work.
-- `message.created`, `message.updated`, `message.deleted`: ordinary channel events, including messages without mentions. Request `messages:read` for these.
+- `channel.message.created`, `channel.message.updated`, `channel.message.deleted`: ordinary channel events, including messages without mentions. Request `messages:read` for these.
 
 All callbacks receive `(event, client)`. Events are verified against the originating WebUI before your handler runs. For interactions, the actor's admin status reflects their current authorization. Ordinary message events do not authorize commands on behalf of their authors.
 
-Return `AppReply(content="...")` for an inline private reply, or set `visibility="channel"` to post publicly in the channel. `AppReply` also supports `update`, `download`, `error`, and `deferred`. `Action(action_id="...", label="...", context={...})` buttons are supported only on saved channel messages. Button handlers must enforce any operation-specific rules themselves.
+Return `AppChannelReply(content="...")` for an inline private reply, or set `visibility="channel"` to post publicly in the channel. `AppChannelReply` also supports `update`, `download`, `error`, and `deferred`. `Action(action_id="...", label="...", context={...})` buttons are supported only on saved channel messages. Button handlers must enforce any operation-specific rules themselves.
 
-Return `AppReply(type="deferred", operation_id=event.id)` for background work and implement an `operation_status` handler. Keep status replies private. Your app manages workers, job storage, and restart recovery. Recheck `await client.authorize(event.execution_context)` before later sensitive work, and apply your app's own permissions.
+Return `AppChannelReply(type="deferred", operation_id=event.id)` for background work and implement an `operation_status` handler. Keep status replies private. Your app manages workers, job storage, and restart recovery. Recheck `await client.authorize(event.execution_context)` before later sensitive work, and apply your app's own permissions.
 
 Ordinary channel-event handlers return `None`; use the runtime client to send a message. A mention can produce both a channel event and a mention interaction. Check `event.message["author"]` to avoid responding to your own messages. Delivery is best effort, can arrive out of order, and has no replay guarantee.
 

@@ -2,14 +2,14 @@
 
 from .app import App
 from .client import APIError, Client
-from .models import Action, AppChannelMessage, AppReply, Event
+from .models import Action, AppChannelMessage, AppChannelReply, Event
 
 __all__ = [
     "APIError",
     "Action",
     "App",
     "AppChannelMessage",
-    "AppReply",
+    "AppChannelReply",
     "Client",
     "Event",
 ]

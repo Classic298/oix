@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI
 
-from oix import Action, APIError, App, AppChannelMessage, AppReply, Client
+from oix import Action, APIError, App, AppChannelMessage, AppChannelReply, Client
 from oix.client import _check_address, _PublicResolver
 from oix.fastapi import create_router
 
@@ -39,7 +39,7 @@ def app():
 def mention():
     return {
         "id": "operation-1",
-        "type": "mention",
+        "type": "channel.mention",
         "app_id": "installed-1",
         "webui_url": "https://webui.example",
         "actor": {"id": "alice", "is_admin": True},
@@ -96,12 +96,12 @@ async def test_authorize_before_handler_and_use_current_actor(app, monkeypatch):
     monkeypatch.setattr(Client, "authorize", verify)
     seen = []
 
-    @app.on("mention")
+    @app.on("channel.mention")
     async def handler(event, client):
         seen.append(event)
         assert not event.actor["is_admin"]
         assert not hasattr(event, "source")
-        return AppReply(content="Hello")
+        return AppChannelReply(content="Hello")
 
     result = await app.handle_event(payload, authorization=AUTH)
     assert result["content"] == "Hello"
@@ -113,10 +113,16 @@ async def test_authorize_before_handler_and_use_current_actor(app, monkeypatch):
     assert len(seen) == 1
 
 
-async def test_message_events_verified_and_not_command_authorized(app, monkeypatch):
+@pytest.mark.parametrize(
+    "kind",
+    ["channel.message.created", "channel.message.updated", "channel.message.deleted"],
+)
+async def test_message_events_verified_and_not_command_authorized(
+    app, monkeypatch, kind
+):
     payload = {
         "id": "event-1",
-        "type": "message.created",
+        "type": kind,
         "app_id": "installed-1",
         "webui_url": "https://webui.example",
         "channel": {"id": "channel-1"},
@@ -128,7 +134,7 @@ async def test_message_events_verified_and_not_command_authorized(app, monkeypat
     monkeypatch.setattr(Client, "authorize", authorize)
     seen = []
 
-    @app.on("message.created")
+    @app.on(kind)
     async def handler(event, client):
         seen.append(event.message)
 
@@ -186,8 +192,8 @@ async def test_builtin_server_auth_limits_and_verified_dispatch(
     payload = mention()
     verify = AsyncMock(return_value=authorized(payload))
     monkeypatch.setattr(Client, "authorize", verify)
-    handler = AsyncMock(return_value=AppReply(content="Hello"))
-    app.on("mention")(handler)
+    handler = AsyncMock(return_value=AppChannelReply(content="Hello"))
+    app.on("channel.mention")(handler)
 
     async with TestClient(TestServer(run.call_args.args[0])) as client:
         response = await client.get("/hook")
@@ -346,16 +352,16 @@ async def test_runtime_requests_signing_etags_and_no_redirects(app):
 
 def test_private_buttons_rejected():
     with pytest.raises(ValueError, match="Buttons require"):
-        AppReply(actions=[Action(action_id="publish", label="Publish")])
+        AppChannelReply(actions=[Action(action_id="publish", label="Publish")])
 
 
-@pytest.mark.parametrize("kind", ["action", "operation_status"])
+@pytest.mark.parametrize("kind", ["channel.action", "operation_status"])
 async def test_action_and_deferred_status(app, monkeypatch, kind):
     payload = mention()
     payload["type"] = kind
     payload["data"] = (
         {"message_id": "saved-1", "action_id": "confirm", "context": {"value": 1}}
-        if kind == "action"
+        if kind == "channel.action"
         else {"operation_id": payload["id"]}
     )
     monkeypatch.setattr(
@@ -365,7 +371,7 @@ async def test_action_and_deferred_status(app, monkeypatch, kind):
     @app.on(kind)
     async def handle(event, client):
         assert event.data == payload["data"]
-        return AppReply(type="deferred", operation_id=event.id)
+        return AppChannelReply(type="deferred", operation_id=event.id)
 
     reply = await app.handle_event(payload, authorization=AUTH)
     assert reply["operation_id"] == payload["id"]
@@ -375,7 +381,7 @@ async def test_action_and_deferred_status(app, monkeypatch, kind):
 async def test_revoked_access_never_calls_handler(app, monkeypatch):
     monkeypatch.setattr(Client, "authorize", AsyncMock(side_effect=APIError(403)))
     handler = AsyncMock()
-    app.on("mention")(handler)
+    app.on("channel.mention")(handler)
     with pytest.raises(APIError):
         await app.handle_event(mention(), authorization=AUTH)
     handler.assert_not_called()

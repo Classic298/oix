@@ -6,12 +6,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Scope = Literal["mentions:read", "messages:read", "messages:write", "channels:read"]
 EventType = Literal[
-    "mention",
-    "action",
+    "channel.mention",
+    "channel.action",
     "operation_status",
-    "message.created",
-    "message.updated",
-    "message.deleted",
+    "channel.message.created",
+    "channel.message.updated",
+    "channel.message.deleted",
 ]
 
 
@@ -30,7 +30,7 @@ class AppChannelMessage(BaseModel):
     parent_id: str | None = None
 
 
-class AppReply(AppChannelMessage):
+class AppChannelReply(AppChannelMessage):
     type: Literal["message", "update", "deferred", "download", "error"] = "message"
     visibility: Literal["private", "channel"] = "private"
     title: str = Field(default="", max_length=200)

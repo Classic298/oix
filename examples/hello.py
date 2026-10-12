@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from oix import App, AppReply, Client, Event
+from oix import App, AppChannelReply, Client, Event
 
 app = App(
     id="hello",
@@ -23,9 +23,9 @@ app = App(
 )
 
 
-@app.on("mention")
-async def hello(event: Event, client: Client) -> AppReply:
-    return AppReply(content="Hello! This reply is only visible to you.")
+@app.on("channel.mention")
+async def hello(event: Event, client: Client) -> AppChannelReply:
+    return AppChannelReply(content="Hello! This reply is only visible to you.")
 
 
 if __name__ == "__main__":

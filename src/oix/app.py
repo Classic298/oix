@@ -10,9 +10,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .client import APIError, Client
-from .models import AppReply, Event, EventType, Scope
+from .models import AppChannelReply, Event, EventType, Scope
 
-Handler = Callable[[Event, Client], Awaitable[AppReply | None]]
+Handler = Callable[[Event, Client], Awaitable[AppChannelReply | None]]
 
 
 class App:
@@ -158,7 +158,7 @@ class App:
                 raise ValueError("Invalid connection challenge")
             return {"proof": client._sign(challenge)}
         event = Event.model_validate(payload)
-        if event.type.startswith("message."):
+        if event.type.startswith("channel.message."):
             verified = await client.verify_event(payload["event_context"])
             if verified != {k: v for k, v in payload.items() if k != "event_context"}:
                 raise PermissionError("Event context mismatch")
@@ -179,16 +179,16 @@ class App:
             event.message = None
         handler = self._handlers.get(event.type)
         reply = await handler(event, client) if handler else None
-        if event.type.startswith("message."):
+        if event.type.startswith("channel.message."):
             if reply is not None:
                 raise ValueError(
                     "Message events use client.create_message(), not replies"
                 )
             return {"received": True}
         if reply is None:
-            reply = AppReply()
-        if not isinstance(reply, AppReply):
-            raise TypeError("Interaction handlers must return AppReply or None")
+            reply = AppChannelReply()
+        if not isinstance(reply, AppChannelReply):
+            raise TypeError("Interaction handlers must return AppChannelReply or None")
         if reply.type == "deferred" and reply.operation_id != event.id:
             raise ValueError("Use the incoming event ID for deferred replies")
         if event.type == "operation_status" and (
