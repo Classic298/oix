@@ -1,8 +1,11 @@
 """Message payloads for Open WebUI's external app API."""
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+
+if TYPE_CHECKING:
+    from .client import Client
 
 Scope = Literal[
     "channels:mentions:read",
@@ -65,3 +68,57 @@ class Event(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
     message: dict[str, Any] | None = None
     execution_token: str | None = None
+
+    _client: "Client | None" = PrivateAttr(default=None)
+
+    @property
+    def client(self) -> "Client":
+        if self._client is None:
+            raise RuntimeError("This event has no verified client")
+        return self._client
+
+    @property
+    def content(self) -> str | None:
+        if self.type in ("channel.message.created", "channel.message.updated"):
+            return (self.message or {}).get("content")
+        if self.type == "channel.mention":
+            return self.data.get("text")
+        return None
+
+    @property
+    def channel_id(self) -> str:
+        return self.channel["id"]
+
+    @property
+    def message_id(self) -> str | None:
+        if self.type.startswith("channel.message."):
+            return (self.message or {}).get("id")
+        if self.type in ("channel.mention", "channel.action"):
+            return self.data.get("message_id")
+        return None
+
+    @property
+    def parent_id(self) -> str | None:
+        if self.type.startswith("channel.message."):
+            return (self.message or {}).get("parent_id")
+        if self.type in ("channel.mention", "channel.action"):
+            return self.data.get("parent_id")
+        return None
+
+    async def send(self, content: str, *, actions: list[Action] | None = None) -> dict:
+        """Post to this channel, preserving the existing thread."""
+        return await self.client.create_message(
+            self.channel_id, content=content, actions=actions, parent_id=self.parent_id
+        )
+
+    async def reply(self, content: str, *, actions: list[Action] | None = None) -> dict:
+        """Post a channel-visible reply to the source message."""
+        if self.type == "channel.message.deleted" or not self.message_id:
+            raise ValueError("This event has no source message to reply to")
+        return await self.client.create_message(
+            self.channel_id,
+            content=content,
+            actions=actions,
+            parent_id=self.parent_id,
+            reply_to_id=self.message_id,
+        )

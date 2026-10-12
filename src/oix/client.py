@@ -10,13 +10,18 @@ import aiohttp
 import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from .models import AppChannelMessage
+from .models import Action, AppChannelMessage
 
 
 class APIError(Exception):
-    def __init__(self, status: int):
+    def __init__(
+        self, status: int, *, method: str = "", path: str = "", detail: str = ""
+    ):
         self.status = status
-        super().__init__(f"Open WebUI returned HTTP {status}")
+        self.method = method
+        self.path = path
+        self.detail = detail
+        super().__init__(f"Open WebUI returned HTTP {status} for {method} {path}".rstrip())
 
 
 def _origin(value: str) -> str:
@@ -139,7 +144,18 @@ class Client:
                 allow_redirects=False,
             ) as response:
                 if not 200 <= response.status < 300:
-                    raise APIError(response.status)
+                    error_body = bytearray()
+                    while len(error_body) < 65536:
+                        chunk = await response.content.read(65536 - len(error_body))
+                        if not chunk:
+                            break
+                        error_body.extend(chunk)
+                    raise APIError(
+                        response.status,
+                        method=method,
+                        path=path,
+                        detail=error_body.decode("utf-8", errors="replace"),
+                    )
                 body = bytearray()
                 async for chunk in response.content.iter_chunked(16384):
                     body.extend(chunk)
@@ -174,7 +190,19 @@ class Client:
             params=params,
         )
 
-    async def create_message(self, channel_id: str, message: AppChannelMessage):
+    async def create_message(
+        self,
+        channel_id: str,
+        *,
+        content: str = "",
+        actions: list[Action] | None = None,
+        parent_id: str | None = None,
+        reply_to_id: str | None = None,
+    ):
+        message = AppChannelMessage(
+            content=content, actions=actions if actions is not None else [],
+            parent_id=parent_id, reply_to_id=reply_to_id,
+        )
         return await self._request(
             "POST",
             f"/channels/{_path_id(channel_id)}/messages",
@@ -184,10 +212,14 @@ class Client:
     async def update_message(
         self,
         message_id: str,
-        message: AppChannelMessage,
         *,
+        content: str = "",
+        actions: list[Action] | None = None,
         etag: str,
     ):
+        message = AppChannelMessage(
+            content=content, actions=actions if actions is not None else []
+        )
         return await self._request(
             "PATCH",
             f"/messages/{_path_id(message_id)}",
