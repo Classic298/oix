@@ -232,9 +232,9 @@ server = FastAPI()
 server.include_router(create_router(app, path="/events"))
 ```
 
-Run your existing server instead of calling `app.run()`. Set its WebSocket frame limit to 1 MiB; with Uvicorn, use `--ws-max-size 1048576` (or `ws_max_size=1048576` in `uvicorn.run`). The router also accepts `manifest=False`. Its shutdown lifespan composes with your application's lifespan, including existing workers.
+Run your existing server instead of calling `app.run()`. Set its WebSocket frame limit to 16 MiB; with Uvicorn, use `--ws-max-size 16777216` (or `ws_max_size=16 * 1024 * 1024` in `uvicorn.run`). The router also accepts `manifest=False`. Its shutdown lifespan composes with your application's lifespan, including existing workers.
 
-Use the built-in aiohttp server or the FastAPI router. Both authenticate before accepting the socket, enforce 1 MiB JSON packets, and reject binary packets. Interaction responses are limited to 256 KiB of compact UTF-8 JSON; message content remains limited to 32,000 characters. `await app.close()` stops admission, waits up to 30 seconds for accepted handlers, then cancels and awaits remaining work. Both adapters call it during shutdown.
+Use the built-in aiohttp server or the FastAPI router. Both authenticate before accepting the socket, enforce 16 MiB JSON packets, and reject binary packets. Individual events remain limited to 1 MiB. Interaction responses are limited to 256 KiB of compact UTF-8 JSON; message content remains limited to 32,000 characters. History remains paginated. `await app.close()` stops admission, waits up to 30 seconds for accepted handlers, then cancels and awaits remaining work. Both adapters call it during shutdown.
 
 ## Troubleshooting
 

@@ -16,6 +16,7 @@ from test_sdk import API_KEY, AUTH, PEM
 
 from oix import App, ConnectionUnavailable
 from oix.fastapi import create_router
+from oix.socket import JSON, MAX_PACKET
 
 NS = "/apps"
 
@@ -59,7 +60,7 @@ async def serve(app, adapter="aiohttp"):
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         config = uvicorn.Config(
-            host, log_level="error", lifespan="on", ws_max_size=1048576
+            host, log_level="error", lifespan="on", ws_max_size=MAX_PACKET
         )
         server = uvicorn.Server(config)
         task = asyncio.create_task(server.serve(sockets=[listener]))
@@ -78,7 +79,11 @@ async def serve(app, adapter="aiohttp"):
 
 @asynccontextmanager
 async def connect(url, *, token=None, app_id="installed", request=None):
-    sio = socketio.AsyncClient(reconnection=False)
+    sio = socketio.AsyncClient(
+        reconnection=False,
+        websocket_extra_options={"max_msg_size": MAX_PACKET},
+        json=JSON,
+    )
 
     async def handler(data):
         if data["operation"] == "ping":
@@ -320,6 +325,10 @@ async def test_redis_publish_failure_does_not_retry():
 def test_packet_parser_rejects_binary_and_oversized_frames():
     from oix.socket import MAX_PACKET, JSONPacket
 
+    packet = '2["' + "x" * (MAX_PACKET - 5) + '"]'
+    assert len(packet.encode()) == 16 * 1024 * 1024
+    assert JSONPacket(encoded_packet=packet).packet_type == 2
+
     for value in (
         '51-/apps,["app:event",{"_placeholder":true,"num":0}]',
         '61-/apps,1[{"_placeholder":true,"num":0}]',
@@ -471,6 +480,30 @@ async def test_oversized_frame_disconnects_before_dispatch(adapter):
                 disconnected.set()
 
             webui.on("disconnect", on_disconnect, namespace=NS)
-            await webui.emit("app:event", {"content": "x" * 1048576}, namespace=NS)
+            await webui.emit("app:event", {"content": "x" * MAX_PACKET}, namespace=NS)
             await asyncio.wait_for(disconnected.wait(), 3)
+            assert not app._tasks and not app._requests
+
+
+@pytest.mark.parametrize("adapter", ["aiohttp", "fastapi"])
+async def test_large_runtime_packet_and_separate_event_limit(adapter):
+    app = make_app()
+    # Exercise UTF-8 bytes above both the old 1 MiB cap and aiohttp's 4 MiB default.
+    content = "🙂" * (2 * 1024 * 1024)
+
+    async def runtime(packet):
+        assert packet["arguments"]["content"] == content
+        return {"status": 200, "data": {"content": content}}
+
+    async with serve(app, adapter) as url:
+        async with connect(url, request=runtime) as (webui, credentials):
+            result = await app._socket.request(
+                credentials["installation_id"], "test", {"content": content}
+            )
+            assert result == {"content": content}
+            rejected = await webui.call(
+                "app:event", {"content": "x" * 1048576}, namespace=NS
+            )
+            assert rejected == {"status": 413, "error": "Event exceeds 1 MiB"}
+            assert webui.connected
             assert not app._tasks and not app._requests

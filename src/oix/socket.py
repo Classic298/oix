@@ -15,7 +15,7 @@ from .client import APIError, Client, ConnectionLost, ConnectionUnavailable
 
 log = logging.getLogger(__name__)
 NAMESPACE = "/apps"
-MAX_PACKET = 1048576
+MAX_PACKET = 16 * 1024 * 1024
 
 
 def dumps(value, **kwargs):
@@ -34,7 +34,7 @@ class JSONPacket(Packet):
             not isinstance(encoded_packet, str)
             or len(encoded_packet.encode()) > MAX_PACKET
         ):
-            raise ValueError("Socket packet exceeds 1 MiB or is not JSON")
+            raise ValueError("Socket packet exceeds 16 MiB or is not JSON")
         if encoded_packet[:1] in ("5", "6"):
             raise ValueError("Binary app packets are not supported")
         return super().decode(encoded_packet)
@@ -308,7 +308,7 @@ class AppSocket:
     ):
         packet = {"operation": operation, "arguments": arguments}
         if len(dumps(packet).encode()) > MAX_PACKET - 128:
-            raise ValueError("App request exceeds 1 MiB")
+            raise ValueError("App request exceeds 16 MiB")
         sid = await self.resolve(installation_id, preferred_sid)
         task = asyncio.create_task(
             self.server.call(
@@ -351,13 +351,13 @@ class AppSocket:
         return result.get("data")
 
     async def event(self, sid, payload):
-        from .app import _EventError
+        from .app import MAX_EVENT_BYTES, _EventError
 
         peer = self.peers.get(sid)
         if not peer or not peer["ready"]:
             return {"status": 403, "error": "Connection is not authenticated"}
         try:
-            if len(dumps(payload).encode()) > MAX_PACKET - 128:
+            if len(dumps(payload).encode()) > MAX_EVENT_BYTES - 128:
                 return {"status": 413, "error": "Event exceeds 1 MiB"}
             if self.redis:
                 try:

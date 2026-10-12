@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.1] - 2026-10-13
+
+- Allow socket packets up to 16 MiB for runtime requests and responses, including message history. Keep the 1 MiB event and 256 KiB interaction response limits.
+
 ## [0.5.0]
 
 - Move event delivery and runtime operations to authenticated Socket.IO connections initiated by WebUI. Private WebUI instances need no inbound endpoint.
