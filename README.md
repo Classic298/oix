@@ -12,6 +12,8 @@ python -m pip install oix
 
 ## A minimal app
 
+Save this as `app.py`:
+
 ```python
 from oix import App
 
@@ -32,9 +34,9 @@ if __name__ == "__main__":
     app.run()
 ```
 
-`manifest_id` identifies your app in its manifest. WebUI assigns a separate `app_id` to each installation; incoming events and their clients already carry that ID.
+### Create credentials once
 
-Save the example as `app.py`. Create credentials **once**, from your app directory. This shell snippet refuses to overwrite an existing key or `.env`:
+Run this from your app directory. It creates an API key and a signing key, and refuses to overwrite existing credentials:
 
 ```sh
 (
@@ -53,7 +55,9 @@ Save the example as `app.py`. Create credentials **once**, from your app directo
 
 Keep `.env` and the private-key file out of source control. Back them up securely. In production, persist these values through your deployment's secret settings and a mounted key file. Replacing either credential requires updating existing installations.
 
-For normal local startup, load the same credentials and run:
+### Start the app
+
+Load the saved credentials and run:
 
 ```sh
 . ./.env
@@ -62,17 +66,62 @@ python app.py
 
 The SDK reads process environment variables; it does not automatically load `.env`. Run from the app directory when using the relative file path above.
 
-The app listens on port `8000` at `/events`. Use `app.run(port=8001, path="/manifest")` to change these. Press Ctrl+C to stop it.
+The app listens on port `8000` at `/events`. Keep it running while you connect it to WebUI and send messages. Press Ctrl+C to stop it; use the same startup commands and credentials next time.
 
-Keep both secrets in persistent deployment storage and reuse them across restarts. The SDK reads `API_KEY` and the PEM file at `APP_PRIVATE_KEY_FILE`. Explicit `api_key` and PEM `private_key` arguments override these defaults. Missing or invalid credentials fail at construction; startup never generates credentials.
+## Connect to Open WebUI
 
-In WebUI, enable Apps, add your public HTTPS event URL and the API key, approve the scopes, then connect. Invite the app into a channel. GET on the event URL provides the manifest; POST receives authenticated events.
+Your app and WebUI must be able to reach each other. For a deployed app, forward an HTTPS URL such as `https://hello.example.com/events` to the app's port `8000`. Open WebUI through its externally reachable HTTPS address when connecting. For two processes on your computer, use the [local development setup](#local-development) below first.
 
-Pass `manifest=False` to `app.run()` for a POST-only endpoint and enter the app details manually in WebUI. `app.manifest` supplies those details.
+### 1. Connect the app
 
-For local development, set `OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS=http://127.0.0.1:8080` on the app, using the WebUI origin reachable from the app process. Multiple origins are comma-separated. Explicit `allowed_private_origins=(...)` overrides the environment; an empty tuple disables all exceptions. Invalid configured origins fail at construction.
+1. Sign in to WebUI as an admin. Open **Settings**, then **General** under **Admin**. Under **Features**, enable **Apps** and **Channels**, then save.
+2. Open **Apps** in the admin settings and click **Add app** (the plus button).
+3. In **App URL**, enter your app's full endpoint, for example `https://hello.example.com/events`, and click **Continue**.
+4. WebUI loads the app's name, public key and requested scopes automatically. Keep `channels:messages:read` and `channels:messages:write` selected for this example, then click **Back** to return to the connection form.
+5. In **API Key**, paste the value of `API_KEY` from your app's `.env`, without `export API_KEY=`. This is the key you created above. Keep the private-key file on the app server.
+6. Check **Who can use this app?**, then click **Connect**.
 
-Set WebUI's `APP_ALLOWED_PRIVATE_ORIGINS` to allow your app origin. When connecting through a local HTTP WebUI URL, WebUI also requires its own origin in that setting. Inside containers, localhost means that container. Public HTTPS destinations need no private-origin exception.
+The App URL points to your Python app. The SDK serves its manifest with GET and receives events with POST at that same URL; you do not need a separate `/manifest` route.
+
+### 2. Invite it and send a message
+
+1. Open a channel you own or manage, or create one. Apps cannot join direct messages.
+2. Click the **Users** count in the channel header. Under **Apps**, select **Hello** from **Choose an app** and click **Invite**.
+3. Send `hello` in the channel. The app should reply `Hello!` as a channel message. No @mention is needed for this handler.
+
+Invite the app separately into each channel where it should receive messages. To connect another WebUI instance, repeat these steps with the same app URL and API key. Each event's client automatically uses the instance that sent it.
+
+### Local development
+
+This example assumes WebUI runs at `http://127.0.0.1:8080` and the app at `http://127.0.0.1:8000`, both directly on the same computer.
+
+Set this environment variable **on the WebUI process**, then restart WebUI:
+
+```sh
+APP_ALLOWED_PRIVATE_ORIGINS=http://127.0.0.1:8000,http://127.0.0.1:8080
+```
+
+Start your app with:
+
+```sh
+. ./.env
+export OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS=http://127.0.0.1:8080
+python app.py
+```
+
+Open WebUI at `http://127.0.0.1:8080` and follow the connection steps above, using **App URL** `http://127.0.0.1:8000/events`.
+
+WebUI's setting permits the local app endpoint and its own HTTP origin during connection. The app's setting permits callbacks to local WebUI. Public HTTPS destinations need neither exception. With Docker or separate machines, replace these addresses with ones reachable from both processes; `127.0.0.1` inside a container points to that container.
+
+### Configuration
+
+`manifest_id` identifies your app in its manifest. WebUI assigns a separate `app_id` to each installation; incoming events and their clients already carry that ID.
+
+The SDK reads `API_KEY` and the PEM file at `APP_PRIVATE_KEY_FILE`. Explicit `api_key` and PEM `private_key` arguments override these defaults. Missing or invalid credentials fail at construction; startup never generates credentials.
+
+Use `app.run(port=8001, path="/events")` to change the listening port or endpoint. Pass `manifest=False` for a POST-only endpoint, then choose **Enter details manually** in WebUI. `app.manifest` supplies the app details, including its public key and requested scopes.
+
+`OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS` accepts comma-separated origins. Explicit `allowed_private_origins=(...)` overrides the environment; an empty tuple disables all exceptions. Invalid configured origins fail at construction.
 
 ## Events and replies
 
