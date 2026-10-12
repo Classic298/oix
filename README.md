@@ -263,18 +263,3 @@ TEST_REDIS_URL=redis://127.0.0.1:6379 uv run pytest
 uv build
 uv run twine check dist/*
 ```
-
-## Upgrading from 0.4.x
-
-Upgrade WebUI and oix together, then reconnect each existing app in admin settings. Existing app IDs, messages and memberships remain. No database migration is needed.
-
-Handlers and message helpers keep their signatures. Replace saved HTTP destinations:
-
-```python
-# Before
-client = app.client(webui_url, app_id)
-# Now: save event.installation_id when accepting a subscription or job
-client = app.client(installation_id)
-```
-
-`event.webui_url` and `allowed_origins` / `OPEN_WEBUI_ALLOWED_ORIGINS` are removed. There are no WebUI HTTP callbacks to allowlist. Existing subscriptions keyed by URLs must be recreated explicitly; do not assign them to an unrelated new installation.
