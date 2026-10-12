@@ -4,7 +4,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-Scope = Literal["mentions:read", "messages:read", "messages:write", "channels:read"]
+Scope = Literal[
+    "channels:mentions:read",
+    "channels:messages:read",
+    "channels:messages:write",
+    "channels:read",
+]
 EventType = Literal[
     "channel.mention",
     "channel.action",

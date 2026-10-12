@@ -6,6 +6,7 @@
 - Use `manifest_id` when creating an app, separate from WebUI's installation `app_id`.
 - Rename signed fields to `execution_token` and `event_token`; verification requests use `token`.
 - Reject unknown event names when registering handlers.
+- Prefix channel mention and message scopes with `channels:`.
 
 ## [0.2.0] - 2026-10-12
 

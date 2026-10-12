@@ -45,12 +45,7 @@ class App:
             or len(description) > 2000
         ):
             raise ValueError("Invalid app metadata")
-        if len(scopes) > 4 or not set(scopes) <= {
-            "mentions:read",
-            "messages:read",
-            "messages:write",
-            "channels:read",
-        }:
+        if not set(scopes) <= set(get_args(Scope)):
             raise ValueError("Invalid app scopes")
         self._api_key = api_key
         self._private_key = key

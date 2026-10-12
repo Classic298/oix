@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from oix import Action, APIError, App, AppChannelMessage, AppChannelReply, Client
 from oix.client import _check_address, _PublicResolver
 from oix.fastapi import create_router
-from oix.models import EventType
+from oix.models import EventType, Scope
 
 KEY = Ed25519PrivateKey.generate()
 PEM = KEY.private_bytes(
@@ -34,7 +34,7 @@ def app():
         name="Test",
         api_key=API_KEY,
         private_key=PEM,
-        scopes=["messages:read", "messages:write"],
+        scopes=["channels:messages:read", "channels:messages:write"],
     )
 
 
@@ -50,6 +50,40 @@ def mention():
         "execution_token": "context",
         "source": {"unsigned": "not exposed"},
     }
+
+
+@pytest.mark.parametrize("scope", get_args(Scope))
+def test_supported_scopes_are_requested_in_manifest(scope):
+    app = App(
+        manifest_id="test",
+        name="Test",
+        api_key=API_KEY,
+        private_key=PEM,
+        scopes=[scope],
+    )
+    assert app.manifest["requested_scopes"] == [scope]
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "mentions:read",
+        "messages:read",
+        "messages:write",
+        "channels:*",
+        "channels:messages",
+        "unknown",
+    ],
+)
+def test_unknown_scopes_are_rejected(scope):
+    with pytest.raises(ValueError, match="Invalid app scopes"):
+        App(
+            manifest_id="test",
+            name="Test",
+            api_key=API_KEY,
+            private_key=PEM,
+            scopes=[scope],
+        )
 
 
 @pytest.mark.parametrize(

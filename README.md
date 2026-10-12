@@ -23,7 +23,7 @@ app = App(
     name="Hello",
     api_key=os.environ["API_KEY"],
     private_key=Path(os.environ["APP_PRIVATE_KEY_FILE"]).read_text(),
-    scopes=["mentions:read"],
+    scopes=["channels:mentions:read"],
 )
 
 
@@ -65,15 +65,26 @@ Register async handlers with `@app.on(...)` for:
 - `channel.mention`: explicit app mentions; text is in `event.data["text"]`.
 - `channel.action`: a saved message button; `event.data` contains `message_id`, `action_id`, and `context`.
 - `channel.operation.status`: a status request for deferred work.
-- `channel.message.created`, `channel.message.updated`, `channel.message.deleted`: ordinary channel events, including messages without mentions. Request `messages:read` for these.
+- `channel.message.created`, `channel.message.updated`, `channel.message.deleted`: ordinary channel events, including messages without mentions. Request `channels:messages:read` for these.
 
 All callbacks receive `(event, client)`. Events are verified against the originating WebUI before your handler runs. For interactions, the actor's admin status reflects their current authorization. Ordinary message events do not authorize commands on behalf of their authors.
 
 Return `AppChannelReply(content="...")` for an inline private reply, or set `visibility="channel"` to post publicly in the channel. `AppChannelReply` also supports `update`, `download`, `error`, and `deferred`. `Action(action_id="...", label="...", context={...})` buttons are supported only on saved channel messages. Button handlers must enforce any operation-specific rules themselves.
 
-Return `AppChannelReply(type="deferred", operation_id=event.id)` for background work and implement an `channel.operation.status` handler. Keep status replies private. Your app manages workers, job storage, and restart recovery. Recheck `await client.authorize(event.execution_token)` before later sensitive work, and apply your app's own permissions.
+Return `AppChannelReply(type="deferred", operation_id=event.id)` for background work and implement a `channel.operation.status` handler. Keep status replies private. Your app manages workers, job storage, and restart recovery. Recheck `await client.authorize(event.execution_token)` before later sensitive work, and apply your app's own permissions.
 
 Ordinary channel-event handlers return `None`; use the runtime client to send a message. A mention can produce both a channel event and a mention interaction. Check `event.message["author"]` to avoid responding to your own messages. Delivery is best effort, can arrive out of order, and has no replay guarantee.
+
+## Scopes
+
+Apps request scopes in their manifest. Admins choose which to grant and can change that selection in app settings. Channel access also requires an invitation to the channel.
+
+- `channels:mentions:read`: receive explicit app mentions, without message history.
+- `channels:messages:read`: receive message events, read history and thread replies, and receive mentions.
+- `channels:messages:write`: send messages and edit the app's own messages, including public callback replies.
+- `channels:read`: list joined channels and their details, without messages.
+
+Write access does not grant read access. Private replies do not require write access.
 
 ## Runtime client
 

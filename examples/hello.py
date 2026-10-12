@@ -10,7 +10,7 @@ app = App(
     name="Hello",
     api_key=os.environ["API_KEY"],
     private_key=Path(os.environ["APP_PRIVATE_KEY_FILE"]).read_text(),
-    scopes=["mentions:read"],
+    scopes=["channels:mentions:read"],
     allowed_private_origins=tuple(
         filter(
             None,
