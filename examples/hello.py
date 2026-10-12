@@ -1,31 +1,18 @@
-"""Run: python examples/hello.py"""
+"""Run with persistent API_KEY and APP_PRIVATE_KEY_FILE: python examples/hello.py"""
 
-import os
-from pathlib import Path
-
-from oix import App, AppChannelReply, Client, Event
+from oix import App
 
 app = App(
     manifest_id="hello",
     name="Hello",
-    api_key=os.environ["API_KEY"],
-    private_key=Path(os.environ["APP_PRIVATE_KEY_FILE"]).read_text(),
-    scopes=["channels:mentions:read"],
-    allowed_private_origins=tuple(
-        filter(
-            None,
-            os.getenv(
-                "OPEN_WEBUI_ALLOWED_PRIVATE_ORIGINS",
-                "",
-            ).split(","),
-        )
-    ),
+    scopes=["channels:messages:read", "channels:messages:write"],
 )
 
 
-@app.on("channel.mention")
-async def hello(event: Event, client: Client) -> AppChannelReply:
-    return AppChannelReply(content="Hello! This reply is only visible to you.")
+@app.on("channel.message.created")
+async def hello(event):
+    if event.content == "hello":
+        await event.reply("Hello!")
 
 
 if __name__ == "__main__":

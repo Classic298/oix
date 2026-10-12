@@ -338,7 +338,8 @@ class App:
             if event.type.startswith("channel.message."):
                 if reply is not None:
                     raise TypeError(
-                        "Message handlers must return None; use event.send() or event.reply()"
+                        "Message handlers must return None; "
+                        "use event.send() or event.reply()"
                     )
                 return None
             if isinstance(reply, str):

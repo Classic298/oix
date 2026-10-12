@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0] - 2026-10-12
+
+- Read persistent credentials from environment defaults.
+- Use single-event handlers with a verified client, message properties, and thread-aware sends and replies.
+- Accept normal keyword arguments for message creation and edits; retain payload models for independent use.
+- Add exact action handlers and private string interaction replies.
+- Acknowledge verified ordinary events before running bounded background handlers; ignore self-authored events by default.
+- Drain accepted work on shutdown, with matching built-in HTTP and FastAPI behavior.
+- Separate input, verification and handler errors; bound deadlines, event bodies and API error details.
+- Preserve compact UTF-8 responses and support 1 MiB incoming events.
+
 ## [0.3.0] - 2026-10-12
 
 - Rename the channel reply model to `AppChannelReply` and channel events to `channel.*`.

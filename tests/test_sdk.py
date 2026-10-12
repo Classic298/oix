@@ -1,3 +1,4 @@
+import asyncio
 import copy
 from typing import get_args
 from unittest.mock import AsyncMock, Mock
@@ -12,7 +13,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI
 
-from oix import Action, APIError, App, AppChannelMessage, AppChannelReply, Client
+from oix import Action, APIError, App, AppChannelReply, Client
+from oix.app import _EventError
 from oix.client import _check_address, _PublicResolver
 from oix.fastapi import create_router
 from oix.models import EventType, Scope
@@ -165,7 +167,7 @@ async def test_authorize_before_handler_and_use_current_actor(app, monkeypatch):
     seen = []
 
     @app.on("channel.mention")
-    async def handler(event, client):
+    async def handler(event):
         seen.append(event)
         assert not event.actor["is_admin"]
         assert not hasattr(event, "source")
@@ -176,7 +178,7 @@ async def test_authorize_before_handler_and_use_current_actor(app, monkeypatch):
     verify.assert_awaited_once_with("context")
     assert len(seen) == 1
     payload["data"] = {"text": "tampered"}
-    with pytest.raises(PermissionError):
+    with pytest.raises(_EventError):
         await app.handle_event(payload, authorization=AUTH)
     assert len(seen) == 1
 
@@ -203,14 +205,15 @@ async def test_message_events_verified_and_not_command_authorized(
     seen = []
 
     @app.on(kind)
-    async def handler(event, client):
+    async def handler(event):
         seen.append(event.message)
 
     payload["event_token"] = "signed"
     assert await app.handle_event(payload, authorization=AUTH) == {"received": True}
+    await asyncio.sleep(0)
     assert len(seen) == 1
     payload["message"]["content"] = "forged"
-    with pytest.raises(PermissionError):
+    with pytest.raises(_EventError):
         await app.handle_event(payload, authorization=AUTH)
     assert len(seen) == 1
 
@@ -225,11 +228,11 @@ async def test_adapter_auth_body_limits_optional_discovery(app):
         assert (await client.get("/manifest")).json() == app.manifest
         assert (await client.get("/private")).status_code == 405
         assert (
-            await client.post("/manifest", content=b"x" * 300000)
+            await client.post("/manifest", content=b"x" * 1048577)
         ).status_code == 401
         assert (
             await client.post(
-                "/manifest", headers={"Authorization": AUTH}, content=b"x" * 300000
+                "/manifest", headers={"Authorization": AUTH}, content=b"x" * 1048577
             )
         ).status_code == 413
         for payload in [
@@ -271,14 +274,14 @@ async def test_builtin_server_auth_limits_and_verified_dispatch(
         else:
             assert response.status == 405
         assert (await client.get("/events")).status == 404
-        assert (await client.post("/hook", data=b"x" * 300000)).status == 401
+        assert (await client.post("/hook", data=b"x" * 1048577)).status == 401
         headers = {"Authorization": AUTH}
         assert (
-            await client.post("/hook", headers=headers, data=b"x" * 300000)
+            await client.post("/hook", headers=headers, data=b"x" * 1048577)
         ).status == 413
 
         async def chunks():
-            for _ in range(5):
+            for _ in range(17):
                 yield b"x" * 65536
 
         assert (
@@ -401,9 +404,9 @@ async def test_runtime_requests_signing_etags_and_no_redirects(app):
             "before": "cursor",
             "parent_id": "thread",
         }
-        message = AppChannelMessage(content="Hello")
-        sent = await client.create_message("channel-1", message)
-        await client.update_message(sent["id"], message, etag=sent["etag"])
+        message = {"content": "Hello"}
+        sent = await client.create_message("channel-1", **message)
+        await client.update_message(sent["id"], **message, etag=sent["etag"])
         assert calls[-1][-1] == '"123"'
         with pytest.raises(APIError) as error:
             await client.get_me()
@@ -413,7 +416,7 @@ async def test_runtime_requests_signing_etags_and_no_redirects(app):
             await client.list_channels()
         for bad_id in ["../me", "foo/bar", "%2e%2e", "foo?bar"]:
             with pytest.raises(ValueError):
-                await client.create_message(bad_id, message)
+                await client.create_message(bad_id, **message)
     finally:
         await runner.cleanup()
 
@@ -437,7 +440,7 @@ async def test_action_and_deferred_status(app, monkeypatch, kind):
     )
 
     @app.on(kind)
-    async def handle(event, client):
+    async def handle(event):
         assert event.data == payload["data"]
         return AppChannelReply(type="deferred", operation_id=event.id)
 
@@ -450,6 +453,6 @@ async def test_revoked_access_never_calls_handler(app, monkeypatch):
     monkeypatch.setattr(Client, "authorize", AsyncMock(side_effect=APIError(403)))
     handler = AsyncMock()
     app.on("channel.mention")(handler)
-    with pytest.raises(APIError):
+    with pytest.raises(_EventError):
         await app.handle_event(mention(), authorization=AUTH)
     handler.assert_not_called()
