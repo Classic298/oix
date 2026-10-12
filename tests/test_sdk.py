@@ -225,7 +225,13 @@ async def test_adapter_auth_body_limits_optional_discovery(app):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=server), base_url="http://test"
     ) as client:
-        assert (await client.get("/manifest")).json() == app.manifest
+        for headers in ({}, {"Authorization": "Bearer wrong"}):
+            response = await client.get("/manifest", headers=headers)
+            assert response.status_code == 401
+            assert "public_key" not in response.text
+        assert (
+            await client.get("/manifest", headers={"Authorization": AUTH})
+        ).json() == app.manifest
         assert (await client.get("/private")).status_code == 405
         assert (
             await client.post("/manifest", content=b"x" * 1048577)
@@ -269,6 +275,12 @@ async def test_builtin_server_auth_limits_and_verified_dispatch(
     async with TestClient(TestServer(run.call_args.args[0])) as client:
         response = await client.get("/hook")
         if manifest:
+            assert response.status == 401
+            assert "public_key" not in await response.text()
+            assert (
+                await client.get("/hook", headers={"Authorization": "Bearer wrong"})
+            ).status == 401
+            response = await client.get("/hook", headers={"Authorization": AUTH})
             assert response.status == 200
             assert await response.json() == app.manifest
         else:

@@ -226,6 +226,10 @@ class App:
         server = web.Application(client_max_size=MAX_EVENT_BYTES)
 
         async def discovery(request):
+            try:
+                self.authenticate(request.headers.get("authorization", ""))
+            except PermissionError:
+                raise web.HTTPUnauthorized(text="Invalid app API key") from None
             return web.json_response(self.manifest, dumps=_json_dumps)
 
         async def events(request):

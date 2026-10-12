@@ -21,7 +21,11 @@ def create_router(
     if manifest:
 
         @router.get(path)
-        async def discovery():
+        async def discovery(request: Request):
+            try:
+                app.authenticate(request.headers.get("authorization", ""))
+            except PermissionError:
+                raise HTTPException(401, "Invalid app API key") from None
             return app.manifest
 
     @router.post(path)

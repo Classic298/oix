@@ -76,12 +76,11 @@ Your app and WebUI must be able to reach each other. For a deployed app, forward
 
 1. Sign in to WebUI as an admin. Open **Settings**, then **General** under **Admin**. Under **Features**, enable **Apps** and **Channels**, then save.
 2. Open **Apps** in the admin settings and click **Add app** (the plus button).
-3. In **App URL**, enter your app's full endpoint, for example `https://hello.example.com/events`, and click **Continue**.
-4. WebUI loads the app's name, public key and requested scopes automatically. Keep `channels:messages:read` and `channels:messages:write` selected for this example, then click **Back** to return to the connection form.
-5. In **API Key**, paste the value of `API_KEY` from your app's `.env`, without `export API_KEY=`. This is the key you created above. Keep the private-key file on the app server.
-6. Check **Who can use this app?**, then click **Connect**.
+3. In **App URL**, enter your app's full endpoint, for example `https://hello.example.com/events`. In **API Key**, paste the value of `API_KEY` from your app's `.env`, without `export API_KEY=`. Keep the private-key file on the app server.
+4. Click **Continue**. WebUI authenticates with that key and loads the app's name, public key and requested scopes automatically. Keep `channels:messages:read` and `channels:messages:write` selected for this example, then click **Back** to return to the connection form.
+5. Check **Who can use this app?**, then click **Connect**.
 
-The App URL points to your Python app. The SDK serves its manifest with GET and receives events with POST at that same URL; you do not need a separate `/manifest` route.
+The App URL points to your Python app. The SDK serves its manifest with GET and receives events with POST at that same URL; both require `Authorization: Bearer <API_KEY>`. You do not need a separate `/manifest` route. Opening the URL in a browser without the key returns 401.
 
 ### 2. Invite it and send a message
 

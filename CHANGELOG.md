@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.3] - 2026-10-12
+
+- Require the app API key for manifest discovery in both HTTP adapters. WebUI must send the key when fetching app details.
+
 ## [0.4.2] - 2026-10-12
 
 - Validate private-origin configuration at startup, with an environment default.
