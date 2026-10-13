@@ -203,6 +203,54 @@ async def test_socket_auth_bidirectional_dispatch_and_ack(adapter):
             ] == 403
 
 
+@pytest.mark.parametrize("adapter", ["aiohttp", "fastapi"])
+@pytest.mark.parametrize("background", [True, False])
+async def test_socket_mentions_acceptance_and_execution(adapter, background):
+    from test_sdk import authorized
+
+    app = make_app()
+    entered, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    payload = {}
+
+    async def runtime(packet):
+        assert packet["operation"] == "authorize"
+        return {"status": 200, "data": authorized(payload)}
+
+    @app.on("channel.mention", background=background)
+    async def handler(event):
+        entered.set()
+        await release.wait()
+        finished.set()
+
+    async with serve(app, adapter) as url:
+        async with connect(url, request=runtime) as (webui, credentials):
+            payload.update(
+                id="mention",
+                type="channel.mention",
+                app_id="installed",
+                installation_id=credentials["installation_id"],
+                actor={"id": "user"},
+                channel={"id": "channel"},
+                data={"text": "help", "message_id": "source", "parent_id": "thread"},
+                execution_token="signed",
+            )
+            request = asyncio.create_task(
+                webui.call("app:event", payload, namespace=NS)
+            )
+            await asyncio.wait_for(entered.wait(), 2)
+            if background:
+                assert await asyncio.wait_for(request, 2) == {
+                    "status": 200,
+                    "data": {"received": True},
+                }
+                assert not finished.is_set()
+            else:
+                assert not request.done()
+            release.set()
+            await asyncio.wait_for(finished.wait(), 2)
+            assert await request == {"status": 200, "data": {"received": True}}
+
+
 async def test_reconnect_identity_survives_restart_and_cannot_be_claimed():
     app = make_app()
     async with serve(app) as url:
@@ -273,6 +321,12 @@ async def test_replicas_route_one_write_and_isolate_installations():
                         "id": "2"
                     }
                     assert len(writes) == 2
+        # Client disconnect completes before the server removes its shared route.
+        async with asyncio.timeout(2):
+            while await one._socket.redis.zcard(
+                one._socket.prefix + ":routes:" + first["installation_id"]
+            ):
+                await asyncio.sleep(0.01)
         with pytest.raises(ConnectionUnavailable):
             await two.client(first["installation_id"]).create_message(
                 "channel", content="offline"

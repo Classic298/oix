@@ -176,6 +176,7 @@ class App:
         self._closing = False
         self._close_task: asyncio.Task | None = None
         self._handlers: dict[str, Handler] = {}
+        self._background: dict[str, bool] = {}
         self._actions: dict[str, Handler] = {}
         self.manifest = {
             "id": manifest_id,
@@ -233,10 +234,23 @@ class App:
 
         return register
 
-    def on(self, event_type: EventType):
+    def on(self, event_type: EventType, *, background: bool | None = None):
         if event_type not in get_args(EventType):
             raise ValueError(f"Unknown event type: {event_type}")
-        return self._register(self._handlers, event_type)
+        if background is not None and not isinstance(background, bool):
+            raise TypeError("background must be a boolean")
+        if event_type == "channel.action" and background:
+            raise ValueError("Action handlers must return their response synchronously")
+        register = self._register(self._handlers, event_type)
+
+        def decorator(handler):
+            register(handler)
+            self._background[event_type] = (
+                event_type != "channel.action" if background is None else background
+            )
+            return handler
+
+        return decorator
 
     def action(self, action_id: str):
         if not isinstance(action_id, str) or not 1 <= len(action_id) <= 100:
@@ -326,16 +340,20 @@ class App:
                 raise ValueError("Missing event token")
         except (ValueError, KeyError, TypeError, AttributeError):
             raise _EventError(400, "Invalid app event") from None
-        if ordinary and self._active_messages >= self._max_concurrency:
+        message_event = event.type != "channel.action"
+        if message_event and self._active_messages >= self._max_concurrency:
             raise _EventError(503, "App is at capacity")
         request_task = asyncio.current_task()
         self._requests.add(request_task)
-        if ordinary:
+        if message_event:
             self._active_messages += 1
         transferred = False
         try:
-            if ordinary:
-                await self._verify(event, client, payload, token, ordinary=True)
+            if message_event:
+                acceptance_deadline = (
+                    asyncio.get_running_loop().time() + MESSAGE_VERIFICATION_TIMEOUT
+                )
+                await self._verify(event, client, payload, token, ordinary=ordinary)
                 if self._closing:
                     raise _EventError(503, "App is shutting down")
                 author = (event.message or {}).get("author", {})
@@ -353,7 +371,18 @@ class App:
                     )
                     return {"received": True}
                 handler = self._handlers.get(event.type)
-                if handler:
+                if handler and not self._background.get(event.type, True):
+                    budget = asyncio.timeout_at(acceptance_deadline)
+                    try:
+                        async with budget:
+                            await self._invoke(event, handler)
+                    except TimeoutError:
+                        if not budget.expired():
+                            raise
+                        raise _EventError(
+                            504, "Event acceptance timed out; outcome may be unknown"
+                        ) from None
+                elif handler:
                     task = asyncio.create_task(
                         self._invoke(event, handler),
                         name=f"oix:{event.type}:{event.id}",
@@ -388,13 +417,15 @@ class App:
                 ) from None
         finally:
             self._requests.discard(request_task)
-            if ordinary and not transferred:
+            if message_event and not transferred:
                 self._active_messages -= 1
 
     async def _verify(self, event, client, payload, token, *, ordinary):
         try:
             async with asyncio.timeout(
-                MESSAGE_VERIFICATION_TIMEOUT if ordinary else VERIFICATION_TIMEOUT
+                MESSAGE_VERIFICATION_TIMEOUT
+                if event.type != "channel.action"
+                else VERIFICATION_TIMEOUT
             ):
                 verified = await (
                     client.verify_event(token) if ordinary else client.authorize(token)
@@ -460,7 +491,7 @@ class App:
     async def _invoke(self, event: Event, handler: Handler | None):
         try:
             reply = await handler(event) if handler else None
-            if event.type.startswith("channel.message."):
+            if event.type != "channel.action":
                 if reply is not None:
                     raise TypeError(
                         "Message handlers must return None; "

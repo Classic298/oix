@@ -164,19 +164,25 @@ Register async handlers with `@app.on(...)` for:
 
 All callbacks receive one `event`. Its `event.client` is bound to the originating instance and installation, and is excluded from event serialization. Events are verified against the originating WebUI before your handler runs. For interactions, the actor's admin status reflects their current authorization. Ordinary message events do not authorize commands on behalf of their authors.
 
-For mentions and actions, return a string or `AppChannelReply(content="...")` for an inline private reply, or set `visibility="channel"` to post publicly in the channel. `AppChannelReply` also supports `update`, `download`, `error`, and `ack`. `Action(action_id="...", label="...", context={...})` buttons are supported only on saved channel messages. Button handlers must enforce any operation-specific rules themselves.
+For actions, return a string or `AppChannelReply(content="...")` for an inline private reply, or set `visibility="channel"` to post publicly in the channel. `AppChannelReply` also supports `update`, `download`, `error`, and `ack`. `Action(action_id="...", label="...", context={...})` buttons are supported only on saved channel messages. Button handlers must enforce any operation-specific rules themselves.
 
-Return `AppChannelReply(type="ack")` after accepting background work. This creates no message, loading placeholder, or polling request. Persist durable work before acknowledging it; your worker posts results through `client.create_message()`. Your app owns workers and restart recovery. Recheck `await client.authorize(event.execution_token)` before later sensitive work, and apply your app's own permissions. An acknowledgement does not schedule work automatically.
+For a button, return `AppChannelReply(type="ack")` after accepting background work. This creates no message, loading placeholder, or polling request. Persist durable work before acknowledging it; your worker posts results through `client.create_message()`. Your app owns workers and restart recovery. Recheck `await client.authorize(event.execution_token)` before later sensitive work, and apply your app's own permissions. An acknowledgement does not schedule work automatically.
 
-Ordinary channel-event handlers return `None`. Use `await event.send("...")` to post in the current channel or `await event.reply("...")` to reference the source message. Both preserve its existing thread; replying to a top-level message stays top-level. Both require write access and accept `actions=[...]`. Deleted messages and events without a source message cannot be replied to.
+Message-event and mention handlers return `None`. Use `await event.send("...")` to post in the current channel or `await event.reply("...")` to reference the source message. Both preserve its existing thread; replying to a top-level message stays top-level. Both require write access and accept `actions=[...]`. Deleted messages and events without a source message cannot be replied to.
 
 `event.content` contains created/updated message content or the original mention text, unchanged. `event.channel_id`, `event.message_id` and `event.parent_id` use verified source information. The original `actor`, `channel`, `message`, `data` and token fields remain available.
 
-Ordinary events are acknowledged after verification, then handlers run in background tasks. `max_concurrency=32` bounds verification and ordinary handlers together; overload returns status 503 without queuing or retries. Acknowledged work does not survive a process crash. Delivery is best effort, can arrive out of order, and has no replay guarantee. Keep durable work in your own job storage.
+Message events and mentions are acknowledged internally after verification, then handlers run in background tasks. `max_concurrency=32` bounds verification and ordinary handlers together; overload returns status 503 without queuing or retries. Acknowledged work does not survive a process crash. Delivery is best effort, can arrive out of order, and has no replay guarantee. Keep durable work in your own job storage.
 
-Self-authored message events are ignored by default for the current installation. Pass `ignore_self_events=False` to receive them. Other apps and model messages are not filtered. A mention can produce both a channel event and a mention interaction.
+Self-authored message events are ignored by default for the current installation. Pass `ignore_self_events=False` to receive them. Other apps and model messages are not filtered. A mention can produce both a channel event and a mention event.
 
-Interactions have a 2.5-second processing budget, including at most two seconds for verification. Ordinary verification has eight seconds; acknowledged handlers have no acknowledgement deadline. Timeout cancellation does not undo external side effects. Persist longer work and return an acknowledgement before this deadline.
+Button actions have a 2.5-second processing budget, including at most two seconds for verification. Message and mention verification has eight seconds; background handlers have no response deadline. Timeout cancellation does not undo external side effects.
+
+For durable event acceptance, use `@app.on("channel.mention", background=False)`.
+The handler only saves the verified event to your job storage and returns `None`.
+oix then sends the delivery receipt. A failed save rejects acceptance. Verification
+and this admission handler share an eight-second budget; workers execute the saved
+command later. Keep channel sends and business work out of this admission handler.
 
 Route buttons by exact action ID:
 

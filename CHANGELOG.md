@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0
+
+- Run mention handlers asynchronously, with automatic delivery receipts and no command response deadline.
+- Add `background=False` for handlers that persist work before accepting an event.
+- Require mention handlers to return `None` and send channel messages explicitly. Button response behavior is unchanged.
+
+
 ## 0.7.0 - 2026-10-13
 
 - Add structured embeds with titles, fields, color accents, authors, footers and thumbnails.

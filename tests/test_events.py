@@ -179,7 +179,7 @@ async def test_bound_helpers_and_serialization(monkeypatch, parent):
         await event.reply("no")
 
 
-async def test_mentions_use_signed_thread_and_string_reply(monkeypatch):
+async def test_mentions_use_signed_thread_and_channel_reply(monkeypatch):
     app = make_app()
     payload = mention()
     payload["data"].update(message_id="original", parent_id="thread")
@@ -193,10 +193,10 @@ async def test_mentions_use_signed_thread_and_string_reply(monkeypatch):
     async def handler(event):
         assert event.content == "hello"
         await event.reply("public")
-        return "private"
 
     result = await app.handle_event(payload, client=bound(payload))
-    assert result["content"] == "private" and result["visibility"] == "private"
+    assert result == {"received": True}
+    await asyncio.gather(*app._tasks)
     assert send.call_args.kwargs["parent_id"] == "thread"
     payload["data"]["parent_id"] = "forged"
     with pytest.raises(_EventError) as exc:
@@ -361,6 +361,8 @@ async def test_deadlines(monkeypatch, phase):
         await asyncio.Event().wait()
 
     p = message() if phase == "message_verification" else mention()
+    if phase != "message_verification":
+        p["type"] = "channel.action"
     if phase == "message_verification":
         monkeypatch.setattr(Client, "verify_event", slow)
     else:

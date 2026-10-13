@@ -9,10 +9,9 @@ app = App(
 )
 
 
-@app.on("channel.message.created")
+@app.on("channel.mention")
 async def hello(event):
-    if event.content == "hello":
-        await event.reply("Hello!")
+    await event.reply("Hello!")
 
 
 if __name__ == "__main__":

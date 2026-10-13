@@ -128,10 +128,10 @@ async def test_authorize_before_handler_and_use_current_actor(app, monkeypatch):
         seen.append(event)
         assert not event.actor["is_admin"]
         assert not hasattr(event, "source")
-        return AppChannelReply(content="Hello")
 
     result = await app.handle_event(payload, client=bound(payload))
-    assert result["content"] == "Hello"
+    assert result == {"received": True}
+    await asyncio.gather(*app._tasks)
     verify.assert_awaited_once_with("context")
     assert len(seen) == 1
     payload["data"] = {"text": "tampered"}
@@ -180,7 +180,7 @@ def test_private_buttons_rejected():
         AppChannelReply(actions=[Action(action_id="publish", label="Publish")])
 
 
-@pytest.mark.parametrize("kind", ["channel.action", "channel.mention"])
+@pytest.mark.parametrize("kind", ["channel.action"])
 async def test_acknowledgement(app, monkeypatch, kind):
     payload = mention()
     payload["type"] = kind
