@@ -270,14 +270,21 @@ Send a compact report card with `Embed` and `EmbedField`:
 from oix import Action, Embed, EmbedField
 
 await event.reply(
-    embeds=[Embed(
-        title="Advisory reported",
-        url="https://github.com/example/project/security/advisories/GHSA-example",
-        description="Review the reported vulnerability.",
-        color=0xDA3633,
-        fields=[EmbedField(name="Severity", value="High", inline=True)],
-    )],
-    actions=[Action(label="View Full Report", url="https://github.com/example/project/security/advisories/GHSA-example")],
+    embeds=[
+        Embed(
+            title="Advisory reported",
+            url="https://github.com/example/project/security/advisories/GHSA-example",
+            description="Review the reported vulnerability.",
+            color=0xDA3633,
+            fields=[EmbedField(name="Severity", value="High", inline=True)],
+        )
+    ],
+    actions=[
+        Action(
+            label="View Full Report",
+            url="https://github.com/example/project/security/advisories/GHSA-example",
+        )
+    ],
 )
 ```
 
