@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0 - 2026-10-13
+
+- Add structured embeds with titles, fields, color accents, authors, footers and thumbnails.
+- Support embeds on message creation, updates, event helpers and interaction replies.
+- Add link actions that open a URL without calling an app handler.
+- Validate embed text limits and HTTP(S) URLs before delivery.
+
 ## [0.6.0] - 2026-10-13
 
 - Add `AppChannelReply(type="ack")` to acknowledge an interaction without creating a response message.

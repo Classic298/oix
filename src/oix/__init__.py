@@ -2,7 +2,7 @@
 
 from .app import App
 from .client import APIError, Client, ConnectionLost, ConnectionUnavailable
-from .models import Action, AppChannelMessage, AppChannelReply, Event
+from .models import Action, AppChannelMessage, AppChannelReply, Embed, EmbedField, Event
 
 __all__ = [
     "APIError",
@@ -13,5 +13,7 @@ __all__ = [
     "Client",
     "ConnectionLost",
     "ConnectionUnavailable",
+    "Embed",
+    "EmbedField",
     "Event",
 ]

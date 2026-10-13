@@ -3,7 +3,7 @@
 import json
 import re
 
-from .models import Action, AppChannelMessage
+from .models import Action, AppChannelMessage, Embed
 
 
 class APIError(Exception):
@@ -101,12 +101,14 @@ class Client:
         *,
         content: str = "",
         actions: list[Action] | None = None,
+        embeds: list[Embed] | None = None,
         parent_id: str | None = None,
         reply_to_id: str | None = None,
     ):
         message = AppChannelMessage(
             content=content,
             actions=actions if actions is not None else [],
+            embeds=embeds if embeds is not None else [],
             parent_id=parent_id,
             reply_to_id=reply_to_id,
         )
@@ -122,12 +124,15 @@ class Client:
         *,
         content: str = "",
         actions: list[Action] | None = None,
+        embeds: list[Embed] | None = None,
         etag: str,
     ):
         if not isinstance(etag, str) or not re.fullmatch(r"[0-9]+", etag):
             raise ValueError("Use the unquoted etag returned by Open WebUI")
         message = AppChannelMessage(
-            content=content, actions=actions if actions is not None else []
+            content=content,
+            actions=actions if actions is not None else [],
+            embeds=embeds if embeds is not None else [],
         )
         return await self._request(
             "update_message",

@@ -262,3 +262,29 @@ TEST_REDIS_URL=redis://127.0.0.1:6379 uv run pytest
 uv build
 uv run twine check dist/*
 ```
+## Embeds
+
+Send a compact report card with `Embed` and `EmbedField`:
+
+```python
+from oix import Action, Embed, EmbedField
+
+await event.reply(
+    embeds=[Embed(
+        title="Advisory reported",
+        url="https://github.com/example/project/security/advisories/GHSA-example",
+        description="Review the reported vulnerability.",
+        color=0xDA3633,
+        fields=[EmbedField(name="Severity", value="High", inline=True)],
+    )],
+    actions=[Action(label="View Full Report", url="https://github.com/example/project/security/advisories/GHSA-example")],
+)
+```
+
+`event.send()`, `event.reply()`, client message methods and `AppChannelReply` accept `embeds`. Content is optional for card-only messages. `Embed.add_field()` appends a validated field. Authors, footers and thumbnails accept `{"name": ...}`, `{"text": ...}` and `{"url": ...}` respectively.
+
+Edits replace content, actions and embeds. Include cards and buttons you want to retain; omitted lists are cleared. Link actions require an HTTP(S) URL instead of an action ID and never invoke a handler. Acknowledgements cannot contain embeds.
+
+Embeds follow Discord's text limits: 256-character titles and field names, 4,096-character descriptions, 1,024-character field values, 2,048-character footers, 25 fields per embed, ten embeds and 6,000 combined embed characters per message. Oversized input raises a validation error; the SDK does not truncate it.
+
+Upgrade WebUI before apps start sending embeds. Version 0.7.0 requires WebUI's embed support for those messages; the socket transport and credentials are unchanged.

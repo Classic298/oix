@@ -159,7 +159,9 @@ async def test_bound_helpers_and_serialization(monkeypatch, parent):
 
     await app.handle_event(payload, client=bound(payload))
     await app.close()
-    assert calls[0][3] == dict(content="hello", actions=None, parent_id=parent)
+    assert calls[0][3] == dict(
+        content="hello", actions=None, embeds=None, parent_id=parent
+    )
     assert calls[1][3]["reply_to_id"] == "message-1"
     assert calls[1][3]["parent_id"] == parent
     assert calls[0][:3] == (payload["installation_id"], payload["app_id"], "channel-1")

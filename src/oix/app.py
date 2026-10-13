@@ -475,6 +475,7 @@ class App:
                 raise TypeError(
                     "Interaction handlers must return AppChannelReply, str or None"
                 )
+            reply = AppChannelReply.model_validate(reply.model_dump())
             result = {"type": "ack"} if reply.type == "ack" else reply.model_dump()
             if len(_json_dumps(result).encode()) > 262144:
                 raise ValueError("App reply exceeds 256 KiB")
